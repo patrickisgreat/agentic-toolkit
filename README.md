@@ -123,9 +123,13 @@ treats issue/PR text as instructions). Built in:
   forced via `claude_args`. Never commit `.claude/settings.local.json`.
 - **Fork PRs fail safe** — review uses `pull_request` (no secrets on forks), not
   `pull_request_target`.
+- **Built-in human-approval gate (off by default).** The write-capable jobs declare
+  `environment: ${{ vars.AGENT_ENVIRONMENT || 'agent' }}`. Add Required reviewers to the
+  `agent` environment (Settings → Environments) to make every agent run pause for human
+  sign-off — no file edits.
 
-Recommended hardening (branch protection, Environment approval gates, action SHA-pinning,
-secret scanning, spend caps) and the full threat model: **[docs/SECURITY.md](docs/SECURITY.md)**.
+Further hardening (branch protection, action SHA-pinning, secret scanning, spend caps) and
+the full threat model: **[docs/SECURITY.md](docs/SECURITY.md)**.
 Each built-in control traces to a real failure documented in **[docs/LEARNINGS.md](docs/LEARNINGS.md)**.
 
 ## License

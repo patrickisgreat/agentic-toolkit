@@ -30,6 +30,10 @@ jobs:
       )
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Optional human-approval gate. OFF by default (no required reviewers on the
+    # environment). Add Required reviewers in Settings → Environments to enable; rename via
+    # the AGENT_ENVIRONMENT repo variable. See docs/SECURITY.md.
+    environment: ${{ vars.AGENT_ENVIRONMENT || 'agent' }}
     permissions:
       contents: write
       pull-requests: write

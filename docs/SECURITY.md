@@ -68,10 +68,18 @@ These ship in the workflows as-is:
 
 **Public repos / larger teams:**
 
-- **Gate the agent behind a GitHub Environment with required reviewers.** Add
-  `environment: agent` to the agent jobs and configure required reviewers on that
-  environment — the run pauses for human approval before it can use the secret. A strong,
-  native "are we sure?" gate on top of the permission check.
+- **Turn on the built-in approval gate (already wired).** The write-capable jobs
+  (`agent-ready-trigger`, `plan-approval-gate`, `claude-pr-feedback`) declare
+  `environment: ${{ vars.AGENT_ENVIRONMENT || 'agent' }}`. It is **off by default** — the
+  environment has no protection rules, so jobs run immediately. To require human sign-off
+  before any agent run, go to **Settings → Environments → `agent` → Required reviewers**
+  and add the people allowed to authorize runs. The run then pauses until one of them
+  approves it in the Actions UI — a strong, native "are we sure?" gate on top of the
+  permission check, and it guards the secret too. Rename the environment with the
+  `AGENT_ENVIRONMENT` repo variable. (Required reviewers need a public repo or a paid plan;
+  on a private free-plan repo the gate can't be enabled, but the default is harmless.)
+  Note: the gate is job-level, so an unauthorized `@claude` comment will create a *pending*
+  approval request that the permission check would otherwise have rejected — just decline it.
 - **Restrict who holds write access.** Since write access = ability to trigger the agent,
   treat the collaborator list as a security boundary. Prefer teams over individual grants.
 - **Trim the agent's tool surface.** The agent runs under `bypassPermissions` in CI; if

@@ -39,6 +39,11 @@ jobs:
       (vars.AGENT_PROVIDER == 'claude' || vars.AGENT_PROVIDER == '')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Optional human-approval gate. OFF by default: the auto-created environment has no
+    # required reviewers, so the job runs immediately. To require sign-off before any agent
+    # run, add Required reviewers to this environment (Settings → Environments). Rename it
+    # with the AGENT_ENVIRONMENT repo variable. See docs/SECURITY.md.
+    environment: ${{ vars.AGENT_ENVIRONMENT || 'agent' }}
     permissions:
       contents: write
       pull-requests: write
