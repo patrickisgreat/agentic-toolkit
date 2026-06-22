@@ -148,6 +148,30 @@ implementing. It's how the loop gets smarter instead of repeating itself.
 
 ---
 
+## Automated PR review (optional)
+
+`claude-code-review.yml` posts an automated review on each PR — a second pair of eyes
+before your own. It is **opt-in** (set `ENABLE_CLAUDE_REVIEW=true`) and deliberately
+cost-aware:
+
+- **read-only** (the job token is `contents: read` — it comments, never pushes),
+- **model-parameterized** via `AGENT_REVIEW_MODEL` (`haiku` cheap → `opus` deep),
+- **skips drafts and docs-only PRs**, and **cancels superseded runs** on a new push.
+
+It complements — doesn't replace — your review and the `@claude` fix loop. See
+[COST.md](COST.md).
+
+## Cost & model selection
+
+Every Claude job picks its model from a repository variable, so you adjust spend without
+editing workflows. The defaults encode a cost/quality split: frequent work
+(`AGENT_MODEL`, default `sonnet`), rare high-stakes planning (`AGENT_PLAN_MODEL`, default
+`opus`), review (`AGENT_REVIEW_MODEL`, default `sonnet`). Cap worst-case with
+`AGENT_MAX_TURNS`. The `cost-report.yml` workflow reports spend over time. Full guide,
+knobs, and preset profiles: **[COST.md](COST.md)**.
+
+---
+
 ## Labels
 
 `/.github/LABELS.yml` defines the labels the workflows key on. Run the **Setup Labels**
@@ -175,6 +199,9 @@ See the [README](../README.md) for the full quick-start. In short:
 5. **Write a `CLAUDE.md`.** Copy `CLAUDE.template.md` to `CLAUDE.md` and fill in your
    stack, commands, and conventions. The agent reads this on every run — it's the single
    biggest lever on output quality.
+6. **(Optional) Tune cost and enable review.** Set `AGENT_MODEL` / `AGENT_PLAN_MODEL` /
+   `AGENT_REVIEW_MODEL` / `AGENT_MAX_TURNS`, and `ENABLE_CLAUDE_REVIEW=true` for automated
+   review. All have sensible defaults. See [COST.md](COST.md).
 
 ---
 
@@ -192,8 +219,14 @@ Running an agent with write access off a label is powerful; the toolkit constrai
   not your laptop. The committed `.claude/settings.json` is the *interactive* allowlist;
   the headless permission mode is forced in the workflow (see `docs/LEARNINGS.md` for why
   both exist and why they differ).
+- **Least-privilege job tokens.** The review job is `contents: read` and can't push; only
+  the implementation jobs get `contents: write`. Fork PRs run without secrets
+  (`pull_request`, not `pull_request_target`), so they fail safe.
 - **Never commit `.claude/settings.local.json`** — it's gitignored, and in CI it would
   override the workflow's permission mode.
+
+For the full threat model and hardening by risk level (branch protection, Environment
+approval gates, action SHA-pinning, secret scanning, spend caps), see **[SECURITY.md](SECURITY.md)**.
 
 ---
 

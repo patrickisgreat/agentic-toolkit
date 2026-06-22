@@ -1,0 +1,102 @@
+# Automated PR review by Claude. OPT-IN and cost-aware by design.
+#
+# This is OFF unless you turn it on. It posts a single review comment on each PR; it
+# never pushes code (contents: read only) and never approves/merges.
+#
+# Enable:  set repository variable ENABLE_CLAUDE_REVIEW = true
+# Model:   set AGENT_REVIEW_MODEL (default: sonnet).
+#            haiku  → cheapest, light review
+#            sonnet → balanced (default)
+#            opus   → deepest, most expensive
+# Cost levers built in (see docs/COST.md):
+#   • Opt-in toggle (ENABLE_CLAUDE_REVIEW) — the whole workflow is off by default.
+#   • Parameterized model (AGENT_REVIEW_MODEL) — pick the tier that fits the repo.
+#   • paths-ignore — skips docs-only / lockfile-only PRs that don't need a code review.
+#   • Draft skip — no spend on drafts.
+#   • concurrency cancel-in-progress — a new push cancels the stale review run.
+#   • timeout-minutes + optional AGENT_MAX_TURNS — bound a runaway review.
+
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    # Don't spend a review on changes that aren't code. Tune to your repo.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '**/*.lock'
+      - 'package-lock.json'
+      - 'go.sum'
+
+# A new push to the PR cancels the in-flight review — you only pay for the latest.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  review:
+    # Opt-in (ENABLE_CLAUDE_REVIEW) + Claude provider + not a draft.
+    if: |
+      vars.ENABLE_CLAUDE_REVIEW == 'true' &&
+      (vars.AGENT_PROVIDER == 'claude' || vars.AGENT_PROVIDER == '') &&
+      github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read          # read-only: a reviewer never pushes code
+      pull-requests: write     # post the review comment
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code — PR Review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Read-only review: the agent uses gh to read the diff and post ONE comment.
+          claude_args: |
+            --permission-mode bypassPermissions
+            --model ${{ vars.AGENT_REVIEW_MODEL || 'sonnet' }}
+            ${{ vars.AGENT_MAX_TURNS != '' && format('--max-turns {0}', vars.AGENT_MAX_TURNS) || '' }}
+          settings: |
+            {
+              "permissions": {
+                "defaultMode": "bypassPermissions"
+              }
+            }
+          prompt: |
+            You are reviewing pull request #${{ github.event.pull_request.number }}
+            ("${{ github.event.pull_request.title }}") in ${{ github.repository }}.
+
+            Keep this review focused and economical — you are a cost-aware reviewer.
+
+            Steps:
+            1. Read the diff:
+               gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
+            2. Read CLAUDE.md and docs/LEARNINGS.md so your review reflects this project's
+               conventions and known failure modes.
+            3. Review for, in priority order:
+               - Correctness bugs and broken edge cases
+               - Security issues (injection, secrets, authz, unsafe input handling)
+               - Scope drift vs. the linked issue / "Out of scope"
+               - Missing or weak tests for the behavior changed
+               - Violations of the conventions in CLAUDE.md
+            4. Post exactly ONE review comment on the PR (do NOT spam multiple comments,
+               and do NOT push code). Start it with the marker line:
+                 <!-- claude-code-review -->
+               If a previous comment with that marker exists, edit it instead of adding
+               a new one. Structure it as: a one-line verdict, then a short bulleted list
+               of concrete findings (file:line where possible), then "Nits" if any.
+               If the PR looks good, say so briefly — don't invent problems to list.
+            5. Do NOT approve or request-changes formally; a human owns the merge decision.
+
+            Be concise. A tight, high-signal review is cheaper and more useful than an
+            exhaustive one.

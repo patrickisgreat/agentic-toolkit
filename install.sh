@@ -77,19 +77,24 @@ copy_file() {
 
 # ── Workflows (toolkit-owned; overwritable with --force) ─────────────────────
 for wf in agent-ready-trigger plan-approval-gate claude-pr-feedback \
-          agent-retro auto-label-agent-ready setup-labels; do
+          agent-retro claude-code-review cost-report \
+          auto-label-agent-ready setup-labels; do
   copy_file ".github/workflows/$wf.yml" ".github/workflows/$wf.yml" 1
 done
 
-# ── Templates, labels, settings (toolkit-owned; overwritable with --force) ───
+# ── Templates, labels, settings, deps (toolkit-owned; overwritable with --force) ─
 copy_file ".github/ISSUE_TEMPLATE/agent-ready.md"            ".github/ISSUE_TEMPLATE/agent-ready.md" 1
 copy_file ".github/PULL_REQUEST_TEMPLATE/agent-generated.md" ".github/PULL_REQUEST_TEMPLATE/agent-generated.md" 1
 copy_file ".github/LABELS.yml"                               ".github/LABELS.yml" 1
+copy_file ".github/dependabot.yml"                           ".github/dependabot.yml" 0
 copy_file ".claude/settings.json"                            ".claude/settings.json" 1
 
 # ── Docs ─────────────────────────────────────────────────────────────────────
 copy_file "docs/AGENTIC_DEVELOPMENT.md" "docs/AGENTIC_DEVELOPMENT.md" 1
+copy_file "docs/COST.md"                "docs/COST.md" 1
+copy_file "docs/SECURITY.md"            "docs/SECURITY.md" 0
 copy_file "docs/plans/.gitkeep"         "docs/plans/.gitkeep" 1
+copy_file "docs/cost-reports/.gitkeep"  "docs/cost-reports/.gitkeep" 1
 # Never clobber a project's own learnings.
 copy_file "docs/LEARNINGS.md"           "docs/LEARNINGS.md" 0
 
@@ -128,7 +133,11 @@ Next steps:
   2. (Optional) Set AGENT_PROVIDER variable: claude | openai-codex | copilot | custom
   3. Sync labels:               Actions → Setup Labels → Run workflow
   4. Fill in CLAUDE.md (or merge CLAUDE.template.md into yours).
-  5. Commit the layer, open an agent-ready issue, and apply the `agent-ready` label.
+  5. (Optional) Cost & review variables — all have sensible defaults:
+       AGENT_MODEL (sonnet)  AGENT_PLAN_MODEL (opus)  AGENT_REVIEW_MODEL (sonnet)
+       AGENT_MAX_TURNS       ENABLE_CLAUDE_REVIEW=true   → see docs/COST.md
+  6. Review the security posture before going live → see docs/SECURITY.md
+  7. Commit the layer, open an agent-ready issue, and apply the `agent-ready` label.
 
 See docs/AGENTIC_DEVELOPMENT.md for the full workflow.
 EOF

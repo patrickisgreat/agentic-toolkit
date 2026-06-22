@@ -25,10 +25,14 @@ write an agent-ready issue
            complexity:low/medium → implement → open PR
            complexity:high       → write a plan → wait for /approve-plan
               → plan-approval-gate.yml → implement approved plan → open PR
+   → PR opens
+      → claude-code-review.yml posts an automated review   (opt-in)
    → you review; comment "@claude ..." to request changes
       → claude-pr-feedback.yml pushes fixes to the PR branch
    → you merge
       → agent-retro.yml proposes a durable guardrail if there's a lesson
+   ───────────────────────────────────────────────────────────────────
+   cost-report.yml  →  monthly / on-demand spend report over time
 ```
 
 A human stays in the loop at the points that matter — applying the label, approving
@@ -46,8 +50,11 @@ the feedback loop, and the compounding retro — is in
 | `.github/workflows/plan-approval-gate.yml` | Listens for `/approve-plan` on high-complexity issues, then implements the approved plan. |
 | `.github/workflows/claude-pr-feedback.yml` | `@claude <instruction>` on a PR → the agent pushes fixes to the branch. Write-access gated. |
 | `.github/workflows/agent-retro.yml` | After an agent PR merges, proposes a `LEARNINGS` entry + guardrail test if there's a durable lesson. |
+| `.github/workflows/claude-code-review.yml` | **Opt-in** automated PR review (read-only). Cost-aware: parameterized model, draft/docs skip, concurrency-cancel. |
+| `.github/workflows/cost-report.yml` | Scheduled + on-demand spend report over a window: runs, durations, runner cost, LLM-cost estimate, trend. |
 | `.github/workflows/auto-label-agent-ready.yml` | Validates issue structure and advises; **never** auto-applies the label (by design). |
 | `.github/workflows/setup-labels.yml` | One-click sync of `.github/LABELS.yml` into the repo. |
+| `.github/dependabot.yml` | Weekly updates for the GitHub Actions used here (supply-chain hygiene). |
 | `.github/ISSUE_TEMPLATE/agent-ready.md` | The structured issue template the loop runs on. |
 | `.github/PULL_REQUEST_TEMPLATE/agent-generated.md` | Self-review checklist + `Closes #NNN` for agent PRs. |
 | `.github/LABELS.yml` | The readiness / output / complexity labels the workflows key on. |
@@ -55,6 +62,8 @@ the feedback loop, and the compounding retro — is in
 | `CLAUDE.template.md` | Copy to `CLAUDE.md` and fill in — the agent reads it on every run. |
 | `docs/AGENTIC_DEVELOPMENT.md` | The system guide. |
 | `docs/LEARNINGS.md` | Institutional memory: agent failure modes + guardrails. The retro appends here. |
+| `docs/COST.md` | Cost containment knobs + the spend report. |
+| `docs/SECURITY.md` | Trust boundary, built-in controls, and hardening by risk level. |
 
 ## Adopt it
 
@@ -82,20 +91,42 @@ git clone https://github.com/patrickisgreat/agentic-toolkit
 3. **Sync labels.** Actions → **Setup Labels** → Run workflow (one time).
 4. **Write your `CLAUDE.md`.** Copy `CLAUDE.template.md` to `CLAUDE.md` and fill in your
    stack, commands, and conventions. This is the single biggest lever on output quality.
-5. **Try it.** Open an issue with the **🤖 Agent-Ready Task** template, fill it out, and
+5. **(Optional) Tune cost & enable review.** Set repository **variables** (none required —
+   sensible defaults apply): `AGENT_MODEL` (default `sonnet`), `AGENT_PLAN_MODEL` (default
+   `opus`), `AGENT_REVIEW_MODEL` (default `sonnet`), `AGENT_MAX_TURNS`, and
+   `ENABLE_CLAUDE_REVIEW=true` to switch on automated PR review. See **[docs/COST.md](docs/COST.md)**.
+6. **Try it.** Open an issue with the **🤖 Agent-Ready Task** template, fill it out, and
    apply the `agent-ready` label.
 
+## Cost containment
+
+Spend is fully adjustable via repository variables — no file edits. The big lever is
+**model tier per job** (frequent work on `sonnet`, rare high-stakes planning on `opus`,
+review on `sonnet`/`haiku`), plus opt-in review, turn caps, draft/docs skips, and
+concurrency-cancel. The **`cost-report.yml`** workflow reports spend over time (runs,
+durations, runner cost, LLM-cost estimate, period-over-period trend) to the job summary —
+and can commit a dated report or open a tracking issue. Full guide and preset profiles
+(solo / team / quality-first): **[docs/COST.md](docs/COST.md)**.
+
 ## Security model
+
+The whole model rests on **only trusted people being able to trigger the agent** (it
+treats issue/PR text as instructions). Built in:
 
 - **A human applies `agent-ready`** — the validator only advises. (A label set by
   `GITHUB_TOKEN` also wouldn't fire the trigger; see `docs/LEARNINGS.md`.)
 - **`/approve-plan` and `@claude` are gated on write/admin access** — randoms on a public
-  repo can't drive the agent.
+  repo can't drive the agent. **A human always owns the merge.**
+- **Least-privilege job tokens** — the review job is `contents: read` (can't push); only
+  the secret `CLAUDE_CODE_OAUTH_TOKEN` reaches the agent.
 - **`bypassPermissions` is scoped to ephemeral CI runners** with a repo-scoped token, and
-  forced via `claude_args` in the workflow. Never commit `.claude/settings.local.json`.
+  forced via `claude_args`. Never commit `.claude/settings.local.json`.
+- **Fork PRs fail safe** — review uses `pull_request` (no secrets on forks), not
+  `pull_request_target`.
 
-These aren't arbitrary — each traces to a real failure documented in
-**[docs/LEARNINGS.md](docs/LEARNINGS.md)**.
+Recommended hardening (branch protection, Environment approval gates, action SHA-pinning,
+secret scanning, spend caps) and the full threat model: **[docs/SECURITY.md](docs/SECURITY.md)**.
+Each built-in control traces to a real failure documented in **[docs/LEARNINGS.md](docs/LEARNINGS.md)**.
 
 ## License
 

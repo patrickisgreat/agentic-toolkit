@@ -71,8 +71,12 @@ jobs:
           # Headless CI must not block on tool-approval prompts. Force bypassPermissions via
           # claude_args (this reaches the SDK permissionMode; a committed .claude/settings*.json
           # or the `settings:` input alone does NOT reliably set it). See docs/LEARNINGS.md.
+          # COST: planning defaults to the strongest model (rare, high-leverage). Override with
+          # the AGENT_PLAN_MODEL / AGENT_MAX_TURNS repo variables. See docs/COST.md.
           claude_args: |
             --permission-mode bypassPermissions
+            --model ${{ vars.AGENT_PLAN_MODEL || 'opus' }}
+            ${{ vars.AGENT_MAX_TURNS != '' && format('--max-turns {0}', vars.AGENT_MAX_TURNS) || '' }}
           settings: |
             {
               "permissions": {
@@ -118,8 +122,12 @@ jobs:
           # Headless CI must not block on tool-approval prompts. Force bypassPermissions via
           # claude_args (this reaches the SDK permissionMode; a committed .claude/settings*.json
           # or the `settings:` input alone does NOT reliably set it). See docs/LEARNINGS.md.
+          # COST: implementation defaults to a mid-tier model. Override with the
+          # AGENT_MODEL / AGENT_MAX_TURNS repo variables. See docs/COST.md.
           claude_args: |
             --permission-mode bypassPermissions
+            --model ${{ vars.AGENT_MODEL || 'sonnet' }}
+            ${{ vars.AGENT_MAX_TURNS != '' && format('--max-turns {0}', vars.AGENT_MAX_TURNS) || '' }}
           settings: |
             {
               "permissions": {

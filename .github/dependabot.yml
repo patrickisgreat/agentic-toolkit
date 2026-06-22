@@ -1,0 +1,13 @@
+# Keep the GitHub Actions this toolkit depends on up to date (supply-chain hygiene).
+# Dependabot opens weekly PRs bumping action versions — including pinned commit SHAs.
+# See docs/SECURITY.md.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore(deps)
+    labels:
+      - dependencies

@@ -1,0 +1,215 @@
+# Cost analysis for the agentic pipeline. Aggregates runs of the agent workflows over a
+# window, reports run counts, durations, success rates, runner-minute cost, and an
+# LLM-cost estimate — with period-over-period trend — and writes a Markdown report.
+#
+# Runs monthly and on demand. The report goes to the Actions job summary; optionally it
+# commits a dated file to docs/cost-reports/ and/or opens a tracking issue.
+#
+# Tunable via repository variables (Settings → Secrets and variables → Variables):
+#   RUNNER_COST_PER_MIN     USD per runner-minute. Default 0 (GitHub-hosted on a public
+#                           repo is free). Private ubuntu-latest is ~0.008.
+#   LLM_COST_PER_RUN_JSON   JSON map of workflow file → average USD/run, to override the
+#                           built-in estimate defaults. e.g.
+#                           {"claude-code-review.yml":0.10,"agent-ready-trigger.yml":0.80}
+#
+# The LLM figure is an ESTIMATE (GitHub exposes run timing, not tokens). Calibrate the
+# per-run averages against your Anthropic Console actuals. For exact token cost, see
+# docs/COST.md. If you capture per-run usage artifacts (also in docs/COST.md), wire them
+# in here later — the GitHub run data below is always available with zero setup.
+
+name: Agentic Cost Report
+
+on:
+  schedule:
+    - cron: '0 6 1 * *'   # 06:00 UTC on the 1st of each month
+  workflow_dispatch:
+    inputs:
+      days:
+        description: 'Window in days to analyze'
+        required: false
+        default: '30'
+      commit_report:
+        description: 'Commit the report to docs/cost-reports/'
+        type: boolean
+        required: false
+        default: false
+      open_issue:
+        description: 'Open a tracking issue with the report'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write    # optional: commit the dated report
+  actions: read      # read workflow run history
+  issues: write      # optional: open a tracking issue
+
+jobs:
+  cost-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Build cost report
+        uses: actions/github-script@v7
+        env:
+          WINDOW_DAYS: ${{ github.event.inputs.days || '30' }}
+          COMMIT_REPORT: ${{ github.event.inputs.commit_report || 'false' }}
+          OPEN_ISSUE: ${{ github.event.inputs.open_issue || 'false' }}
+          RUNNER_COST_PER_MIN: ${{ vars.RUNNER_COST_PER_MIN || '0' }}
+          LLM_COST_PER_RUN_JSON: ${{ vars.LLM_COST_PER_RUN_JSON || '' }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            // Workflows that spend on Claude. Built-in average USD/run estimates — override
+            // any of these with the LLM_COST_PER_RUN_JSON repo variable.
+            const TRACKED = {
+              'agent-ready-trigger.yml':   { label: 'Trigger (plan / implement)', perRun: 0.60 },
+              'plan-approval-gate.yml':    { label: 'Plan approval → implement',  perRun: 0.60 },
+              'claude-pr-feedback.yml':    { label: 'PR feedback (@claude)',      perRun: 0.25 },
+              'agent-retro.yml':           { label: 'Retro',                      perRun: 0.20 },
+              'claude-code-review.yml':    { label: 'PR review',                  perRun: 0.15 },
+            };
+            let overrides = {};
+            const rawOverrides = process.env.LLM_COST_PER_RUN_JSON || '';
+            if (rawOverrides.trim()) {
+              try { overrides = JSON.parse(rawOverrides); }
+              catch (e) { core.warning(`LLM_COST_PER_RUN_JSON is not valid JSON — ignoring. ${e.message}`); }
+            }
+            const perRunCost = (file) =>
+              (file in overrides) ? Number(overrides[file]) : (TRACKED[file]?.perRun ?? 0);
+
+            const days = Math.max(1, parseInt(process.env.WINDOW_DAYS, 10) || 30);
+            const runnerRate = Number(process.env.RUNNER_COST_PER_MIN) || 0;
+            const nowMs = Date.now();
+            const dayMs = 24 * 60 * 60 * 1000;
+            const curStart = new Date(nowMs - days * dayMs);
+            const prevStart = new Date(nowMs - 2 * days * dayMs);
+
+            // Fetch runs created since the previous window start (covers current + previous).
+            const sinceISO = prevStart.toISOString().slice(0, 10);
+            core.info(`Fetching workflow runs created >= ${sinceISO} ...`);
+            let runs = [];
+            try {
+              runs = await github.paginate(
+                github.rest.actions.listWorkflowRunsForRepo,
+                { owner, repo, per_page: 100, created: `>=${sinceISO}` },
+                (resp) => resp.data.workflow_runs
+              );
+            } catch (e) {
+              core.warning(`Could not list runs (${e.message}). Reporting what we have.`);
+            }
+
+            const fileOf = (r) => (r.path || '').split('/').pop();
+            const inWindow = (r, start) => {
+              const t = new Date(r.run_started_at || r.created_at).getTime();
+              return t >= start.getTime() && t <= nowMs;
+            };
+            const durMin = (r) => {
+              const s = new Date(r.run_started_at || r.created_at).getTime();
+              const e = new Date(r.updated_at || r.created_at).getTime();
+              return Math.max(0, (e - s) / 60000);
+            };
+
+            // Aggregate one window into per-workflow stats.
+            const aggregate = (start) => {
+              const per = {};
+              let totalMin = 0, totalRuns = 0, llm = 0;
+              for (const r of runs) {
+                const f = fileOf(r);
+                if (!(f in TRACKED)) continue;
+                if (!inWindow(r, start)) continue;
+                const s = per[f] || (per[f] = { runs: 0, min: 0, success: 0, failure: 0, cancelled: 0, other: 0 });
+                s.runs++; totalRuns++;
+                const m = durMin(r); s.min += m; totalMin += m;
+                const c = r.conclusion;
+                if (c === 'success') s.success++;
+                else if (c === 'failure' || c === 'timed_out') s.failure++;
+                else if (c === 'cancelled') s.cancelled++;
+                else s.other++;
+                llm += perRunCost(f);
+              }
+              return { per, totalMin, totalRuns, llm };
+            };
+
+            const cur = aggregate(curStart);
+            const prev = aggregate(prevStart);
+            // prev spans both windows; subtract the current window to get the prior period.
+            const prior = {
+              totalRuns: Math.max(0, prev.totalRuns - cur.totalRuns),
+              totalMin: Math.max(0, prev.totalMin - cur.totalMin),
+              llm: Math.max(0, prev.llm - cur.llm),
+            };
+
+            const usd = (n) => `$${n.toFixed(2)}`;
+            const delta = (now_, then_) => {
+              if (then_ === 0) return now_ === 0 ? '—' : '▲ new';
+              const pct = ((now_ - then_) / then_) * 100;
+              const arrow = pct > 0 ? '▲' : (pct < 0 ? '▼' : '▬');
+              return `${arrow} ${Math.abs(pct).toFixed(0)}%`;
+            };
+
+            const runnerCost = cur.totalMin * runnerRate;
+            const totalCost = runnerCost + cur.llm;
+
+            // ── Build the report ──────────────────────────────────────────────
+            const today = new Date(nowMs).toISOString().slice(0, 10);
+            let md = '';
+            md += `# 💸 Agentic Cost Report — ${today}\n\n`;
+            md += `Window: **last ${days} days** · Repo: \`${owner}/${repo}\`\n\n`;
+            md += `| Metric | This period | Prev period | Trend |\n`;
+            md += `| --- | ---: | ---: | :--- |\n`;
+            md += `| Agent runs | ${cur.totalRuns} | ${prior.totalRuns} | ${delta(cur.totalRuns, prior.totalRuns)} |\n`;
+            md += `| Runner-minutes | ${cur.totalMin.toFixed(0)} | ${prior.totalMin.toFixed(0)} | ${delta(cur.totalMin, prior.totalMin)} |\n`;
+            md += `| Runner cost | ${usd(runnerCost)} | ${usd(prior.totalMin * runnerRate)} | ${delta(cur.totalMin, prior.totalMin)} |\n`;
+            md += `| LLM cost (est.) | ${usd(cur.llm)} | ${usd(prior.llm)} | ${delta(cur.llm, prior.llm)} |\n`;
+            md += `| **Total (est.)** | **${usd(totalCost)}** | **${usd(prior.totalMin * runnerRate + prior.llm)}** | |\n\n`;
+
+            md += `## By workflow (this period)\n\n`;
+            md += `| Workflow | Runs | ✓ / ✗ / ⊘ | Minutes | Avg min | LLM est. |\n`;
+            md += `| --- | ---: | :---: | ---: | ---: | ---: |\n`;
+            const files = Object.keys(TRACKED).filter((f) => cur.per[f]);
+            if (files.length === 0) {
+              md += `| _no agent runs in window_ | | | | | |\n`;
+            } else {
+              for (const f of files) {
+                const s = cur.per[f];
+                const avg = s.runs ? (s.min / s.runs) : 0;
+                md += `| ${TRACKED[f].label} | ${s.runs} | ${s.success}/${s.failure}/${s.cancelled} | ${s.min.toFixed(0)} | ${avg.toFixed(1)} | ${usd(s.runs * perRunCost(f))} |\n`;
+              }
+            }
+            md += `\n`;
+            md += `> **Runner cost** uses \`RUNNER_COST_PER_MIN = ${runnerRate}\` (USD/min). `;
+            md += `**LLM cost is an estimate** from average USD/run per workflow — calibrate with `;
+            md += `\`LLM_COST_PER_RUN_JSON\` against your Anthropic Console actuals. GitHub exposes run `;
+            md += `timing, not tokens; see docs/COST.md for exact-cost options.\n`;
+
+            // ── Emit to job summary ───────────────────────────────────────────
+            await core.summary.addRaw(md).write();
+            core.info('Report written to the job summary.');
+
+            // ── Optionally commit a dated report ──────────────────────────────
+            if ((process.env.COMMIT_REPORT || 'false') === 'true') {
+              const path = `docs/cost-reports/${today}.md`;
+              let sha;
+              try {
+                const { data } = await github.rest.repos.getContent({ owner, repo, path });
+                sha = data.sha;
+              } catch (_) { /* new file */ }
+              await github.rest.repos.createOrUpdateFileContents({
+                owner, repo, path, sha,
+                message: `docs(cost): agentic cost report ${today}`,
+                content: Buffer.from(md, 'utf8').toString('base64'),
+              });
+              core.info(`Committed ${path}`);
+            }
+
+            // ── Optionally open a tracking issue ──────────────────────────────
+            if ((process.env.OPEN_ISSUE || 'false') === 'true') {
+              await github.rest.issues.create({
+                owner, repo,
+                title: `Agentic cost report — ${today} (last ${days}d): ${usd(totalCost)} est.`,
+                body: md,
+              });
+              core.info('Opened tracking issue.');
+            }
