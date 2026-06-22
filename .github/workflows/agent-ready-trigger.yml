@@ -52,7 +52,7 @@ jobs:
 
       - name: Determine complexity
         id: complexity
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const labels = context.payload.issue.labels.map(l => l.name);
@@ -165,7 +165,7 @@ jobs:
 
       - name: Check for missing CLAUDE_CODE_OAUTH_TOKEN
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.createComment({
@@ -277,7 +277,7 @@ jobs:
 
     steps:
       - name: Dispatch agent-ready event
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.repos.createDispatchEvent({
