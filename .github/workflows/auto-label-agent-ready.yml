@@ -1,0 +1,85 @@
+# Validates that a newly-opened issue is well-formed for agent execution and, if so,
+# leaves a one-time advisory comment telling a human to apply the 'agent-ready' label.
+#
+# It does NOT apply the label itself. That is deliberate: a label applied by the default
+# GITHUB_TOKEN does NOT emit a 'labeled' event other workflows can react to (GitHub
+# suppresses workflow-triggering for GITHUB_TOKEN-generated events to prevent recursion).
+# So an auto-applied 'agent-ready' label silently fails to fire agent-ready-trigger.yml —
+# AND, because the label is already present, a human can no longer trigger the agent by
+# adding it via the UI (it's a no-op). A human (or PAT) must apply it. See docs/LEARNINGS.md.
+#
+# CUSTOMIZATION: Edit the requiredSections array below to match your issue template.
+
+name: Validate Agent-Ready Issues
+
+on:
+  issues:
+    types: [opened, edited]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  validate-and-advise:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Check issue structure and advise (does NOT apply the label)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const body = issue.body || '';
+
+            // Required sections for an agent-ready issue. Edit to match your template.
+            const requiredSections = [
+              '## Summary',
+              '## Context',
+              '## Acceptance Criteria',
+              '## Scope',
+              '## Technical Notes'
+            ];
+
+            const hasAllSections = requiredSections.every(section => body.includes(section));
+            const hasInScope = body.includes('**In scope:**') || body.includes('In scope:');
+            const hasOutScope = body.includes('**Out of scope:**') || body.includes('Out of scope:');
+            const hasScopeBoundaries = hasInScope && hasOutScope;
+            const hasAcceptanceCriteria = /- \[[ x]\]/.test(body);
+
+            const currentLabels = issue.labels.map(l => l.name);
+            const hasAgentReadyLabel = currentLabels.includes('agent-ready');
+            const ADVISORY_MARKER = '<!-- agent-ready-advisory -->';
+
+            if (!(hasAllSections && hasScopeBoundaries && hasAcceptanceCriteria)) {
+              console.log('Issue does not meet agent-ready criteria:');
+              console.log('  All required sections present:', hasAllSections);
+              if (!hasAllSections) {
+                requiredSections.forEach(s => console.log(`    ${body.includes(s) ? '✓' : '✗'} ${s}`));
+              }
+              console.log('  Scope boundaries (in + out):', hasScopeBoundaries);
+              console.log('  Acceptance criteria checkbox:', hasAcceptanceCriteria);
+              return;
+            }
+            if (hasAgentReadyLabel) {
+              console.log('Issue already has agent-ready label — no advisory needed.');
+              return;
+            }
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: issue.number, per_page: 100,
+            });
+            if (comments.some(c => (c.body || '').includes(ADVISORY_MARKER))) {
+              console.log('Advisory already posted — skipping.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: issue.number,
+              body: `${ADVISORY_MARKER}\n✅ This issue looks **agent-ready** (all required sections present). ` +
+                `Apply the \`agent-ready\` label to start the agent.\n\n` +
+                `> The label is intentionally **not** applied automatically — a label set by the ` +
+                `bot token wouldn't fire the agent (and would block you from triggering it). A human ` +
+                `(or a PAT) must apply it. See docs/LEARNINGS.md.`,
+            });
+            console.log('Posted agent-ready advisory comment.');

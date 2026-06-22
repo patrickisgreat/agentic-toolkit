@@ -1,0 +1,94 @@
+# After an agent-generated PR merges, reflect on whether it needed correction and,
+# if there's a generalizable lesson, propose a durable guardrail as its OWN PR
+# (a docs/LEARNINGS.md entry and, where it fits, a guardrail test). A human reviews it.
+#
+# This is the "compounding engine": it turns one-off corrections into permanent
+# guardrails so future agent runs don't repeat the class of mistake. Conservative by
+# design — a clean first-try merge, or a genuine one-off, produces no proposal.
+# Loop-safe: it ignores the retro/* PRs it opens itself.
+
+name: Agent Retro
+
+on:
+  pull_request:
+    types: [closed]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  retro:
+    if: |
+      (vars.AGENT_PROVIDER == 'claude' || vars.AGENT_PROVIDER == '') &&
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'agent-generated') &&
+      !startsWith(github.event.pull_request.head.ref, 'retro/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: read
+      actions: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code — Retro
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Headless CI must not block on tool-approval prompts. See docs/LEARNINGS.md.
+          claude_args: |
+            --permission-mode bypassPermissions
+          settings: |
+            {
+              "permissions": {
+                "defaultMode": "bypassPermissions"
+              }
+            }
+          # show_full_output: true   # uncomment to stream SDK output for debugging
+          additional_permissions: |
+            actions: read
+          prompt: |
+            An agent-generated pull request just merged: PR #${{ github.event.pull_request.number }}
+            ("${{ github.event.pull_request.title }}"), branch "${{ github.event.pull_request.head.ref }}".
+
+            Your job is a RETROSPECTIVE — decide whether this PR needed correction before it
+            landed and, if there is a *generalizable* lesson, propose a durable guardrail so
+            future agent runs don't repeat the class of mistake. You are NOT re-implementing.
+
+            Steps:
+            1. Read the merged PR and its history:
+               - gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json title,body,commits,comments,reviews,closingIssuesReferences,files
+               - gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
+               Signals it needed correction: multiple fix-up commits, "@claude" feedback
+               comments, changes-requested reviews, or evidence CI failed before passing.
+               Also read the issue it closed to see if the work drifted from intent.
+            2. Read docs/LEARNINGS.md and CLAUDE.md so you don't duplicate an existing lesson.
+            3. DECIDE:
+               - If the PR merged cleanly with no signs of correction, OR the only problem was
+                 a genuine one-off unlikely to recur: do NOT open a PR. Post a one-line comment
+                 on PR #${{ github.event.pull_request.number }}: "Retro: no durable lesson
+                 (merged clean / one-off)." Then stop.
+               - Only if there is a recurring CLASS of mistake, continue.
+            4. Open a retrospective PR on branch retro/pr-${{ github.event.pull_request.number }}:
+               - Append an entry to docs/LEARNINGS.md (newest at top) in the existing
+                 Symptom -> Root cause -> Guardrail format.
+               - Prefer an ENFORCEABLE guardrail: where the lesson can be caught by a test, add
+                 or extend a test that asserts the CORRECT behavior (it should PASS against
+                 current main — the mistake is already fixed — and fail only on regression; the
+                 project's CI on the retro PR will verify it passes). Only add a terse CLAUDE.md
+                 rule when a test isn't feasible.
+               - PR title: "Retro: <one-line lesson> (from #${{ github.event.pull_request.number }})"
+               - PR body: link the source PR and the closed issue; state the root cause and why
+                 the guardrail prevents the class. Do NOT add the 'agent-generated' label.
+            5. Stay tightly scoped: LEARNINGS + a guardrail test (+ minimal CLAUDE.md only if a
+               test isn't feasible). Do NOT change application code or unrelated tests.
+
+            Be conservative: a wrong test gets reverted, but a wrong "lesson" misleads every
+            future run. When unsure whether something is a durable class, propose nothing.

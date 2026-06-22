@@ -1,0 +1,9 @@
+# Per-user local Claude Code settings. Never commit: the SDK loads it as a settings
+# source in CI and it overrides the workflow's permission mode. See docs/LEARNINGS.md.
+.claude/settings.local.json
+
+# OS / editor noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

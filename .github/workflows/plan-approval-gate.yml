@@ -1,0 +1,134 @@
+# Listens for '/approve-plan' comments on issues and starts the implementation.
+#
+# Part of the complexity:high flow:
+#   1. agent-ready-trigger.yml fires, Claude writes a plan to docs/plans/ (direct prompt)
+#   2. Claude posts a comment asking for /approve-plan
+#   3. This workflow fires on that comment, verifies the commenter, then implements
+#      the approved plan with a DIRECT prompt.
+#
+# NOTE: this uses a direct implementation prompt, not a slash command — slash
+# commands do NOT resolve in the headless CI action (see docs/LEARNINGS.md).
+# Only collaborators with write/admin can approve.
+
+name: Plan Approval Gate
+
+on:
+  issue_comment:
+    types: [created]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  handle-approve-plan:
+    if: |
+      github.event.issue.pull_request == null &&
+      startsWith(github.event.comment.body, '/approve-plan')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check commenter permissions
+        id: permission-check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commenter = context.payload.comment.user.login;
+            const issueNumber = context.payload.issue.number;
+            let permLevel;
+            try {
+              const result = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner, repo: context.repo.repo, username: commenter
+              });
+              permLevel = result.data.permission;
+            } catch (err) {
+              permLevel = 'none';
+            }
+            const allowed = ['write', 'admin'].includes(permLevel);
+            console.log(`Commenter ${commenter} has permission: ${permLevel} — allowed: ${allowed}`);
+            if (!allowed) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber,
+                body: `@${commenter} Only collaborators with write access can approve plans. Your approval was not processed.`
+              });
+            }
+            core.setOutput('allowed', allowed ? 'true' : 'false');
+
+      - name: Check for existing PR (idempotency)
+        id: pr-check
+        if: steps.permission-check.outputs.allowed == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issueNumber = context.payload.issue.number;
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open'
+            });
+            const existing = prs.find(pr => pr.body && (
+              pr.body.includes(`Closes #${issueNumber}`) || pr.body.includes(`closes #${issueNumber}`) ||
+              pr.body.includes(`Fixes #${issueNumber}`)  || pr.body.includes(`fixes #${issueNumber}`)
+            ));
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: issueNumber,
+                body: `Implementation is already in progress: ${existing.html_url}`
+              });
+              core.setOutput('already_running', 'true');
+            } else {
+              core.setOutput('already_running', 'false');
+            }
+
+      - name: Run Claude Code — Implement Approved Plan
+        if: |
+          steps.permission-check.outputs.allowed == 'true' &&
+          steps.pr-check.outputs.already_running == 'false'
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Headless CI must not block on tool-approval prompts. See docs/LEARNINGS.md.
+          claude_args: |
+            --permission-mode bypassPermissions
+          settings: |
+            {
+              "permissions": {
+                "defaultMode": "bypassPermissions"
+              }
+            }
+          # show_full_output: true   # uncomment to stream SDK output for debugging
+          additional_permissions: |
+            actions: read
+          prompt: |
+            You are implementing issue #${{ github.event.issue.number }}.
+
+            Issue title: ${{ github.event.issue.title }}
+
+            A human has approved the plan for this issue. Your job is to implement it.
+
+            Instructions:
+            1. Read the full issue body for requirements and scope:
+               gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }}
+            2. Read CLAUDE.md for project-specific guidance.
+            3. Find the approved plan file in docs/plans/ that corresponds to this issue
+               (the most recent matching plan — check file dates and titles) and follow it.
+               If no plan file exists, implement directly from the issue.
+            4. Implement the feature following the plan and the issue's acceptance criteria.
+            5. Create a branch, commit, and open a PR:
+               - Branch name: agent/issue-${{ github.event.issue.number }}
+               - PR title should match the issue title
+               - PR body: include "Closes #${{ github.event.issue.number }}" (keep the #) and a summary
+               - Use .github/PULL_REQUEST_TEMPLATE/agent-generated.md if it exists
+            6. Add the 'agent-generated' label to the PR.
+
+            Important:
+            - Stay within the issue's defined scope ("Out of scope" is a hard boundary).
+            - If blocked or uncertain, comment on the issue asking for clarification
+              rather than guessing.
