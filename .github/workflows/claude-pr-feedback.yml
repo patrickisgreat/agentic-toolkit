@@ -70,7 +70,7 @@ jobs:
 
       - name: Checkout
         if: steps.permission-check.outputs.allowed == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
