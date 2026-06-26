@@ -43,7 +43,7 @@ jobs:
 
       - name: Check commenter permissions
         id: permission-check
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const commenter = context.payload.comment.user.login;
@@ -70,7 +70,7 @@ jobs:
       - name: Check for existing PR (idempotency)
         id: pr-check
         if: steps.permission-check.outputs.allowed == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const issueNumber = context.payload.issue.number;
