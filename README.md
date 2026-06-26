@@ -9,10 +9,6 @@ Provider-agnostic with first-class support for **Claude Code** (via
 [`anthropics/claude-code-action`](https://github.com/anthropics/claude-code-action));
 OpenAI Codex, GitHub Copilot, and a generic `repository_dispatch` path are included as
 stubs you extend.
-
-> Extracted and generalized from the agentic-workflow layer originally built in a
-> personal `journal` project, made stack-agnostic.
-
 ---
 
 ## How it works
