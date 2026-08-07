@@ -11,15 +11,19 @@
 #                Never overwrites your CLAUDE.md or an existing docs/LEARNINGS.md.
 #
 # What it copies:
-#   .github/workflows/{agent-ready-trigger,plan-approval-gate,claude-pr-feedback,
-#                      agent-retro,auto-label-agent-ready,setup-labels}.yml
+#   .github/actions/agent-run/action.yml   (the claude/openai/gemini provider seam)
+#   .github/workflows/{agent-ready-trigger,plan-approval-gate,agent-pr-feedback,
+#                      agent-retro,agent-code-review,cost-report,
+#                      auto-label-agent-ready,setup-labels}.yml
 #   .github/ISSUE_TEMPLATE/agent-ready.md
 #   .github/PULL_REQUEST_TEMPLATE/agent-generated.md
 #   .github/LABELS.yml
+#   .github/dependabot.yml
 #   .claude/settings.json
-#   docs/AGENTIC_DEVELOPMENT.md
+#   docs/{AGENTIC_DEVELOPMENT,COST,SECURITY}.md
 #   docs/LEARNINGS.md            (only if you don't already have one)
-#   docs/plans/.gitkeep
+#   docs/plans/.gitkeep, docs/cost-reports/.gitkeep
+#   AGENTS.md, GEMINI.md         (pointers so Codex/Gemini find CLAUDE.md)
 #   CLAUDE.template.md  ->  CLAUDE.md   (only if you don't already have CLAUDE.md)
 #   .gitignore                  (appends the settings.local.json rule if missing)
 #
@@ -35,7 +39,7 @@ FORCE=0
 for arg in "$@"; do
   case "$arg" in
     --force) FORCE=1 ;;
-    -h|--help) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "error: unknown flag: $arg" >&2; exit 2 ;;
     *) TARGET="$arg" ;;
   esac
@@ -75,11 +79,24 @@ copy_file() {
   echo "  + installed:      $rel_dst"; copied=$((copied+1))
 }
 
+# ── Provider seam (every agent workflow calls this) ──────────────────────────
+copy_file ".github/actions/agent-run/action.yml" ".github/actions/agent-run/action.yml" 1
+
 # ── Workflows (toolkit-owned; overwritable with --force) ─────────────────────
-for wf in agent-ready-trigger plan-approval-gate claude-pr-feedback \
-          agent-retro claude-code-review cost-report \
+for wf in agent-ready-trigger plan-approval-gate agent-pr-feedback \
+          agent-retro agent-code-review cost-report \
           auto-label-agent-ready setup-labels; do
   copy_file ".github/workflows/$wf.yml" ".github/workflows/$wf.yml" 1
+done
+
+# ── Retire the pre-provider-seam workflow names ──────────────────────────────
+# claude-pr-feedback → agent-pr-feedback, claude-code-review → agent-code-review.
+# Leaving the old files behind would run two agents on every comment and every PR.
+for old in claude-pr-feedback claude-code-review; do
+  if [ -f "$TARGET/.github/workflows/$old.yml" ]; then
+    rm "$TARGET/.github/workflows/$old.yml"
+    echo "  - removed superseded: .github/workflows/$old.yml"
+  fi
 done
 
 # ── Templates, labels, settings, deps (toolkit-owned; overwritable with --force) ─
@@ -97,6 +114,10 @@ copy_file "docs/plans/.gitkeep"         "docs/plans/.gitkeep" 1
 copy_file "docs/cost-reports/.gitkeep"  "docs/cost-reports/.gitkeep" 1
 # Never clobber a project's own learnings.
 copy_file "docs/LEARNINGS.md"           "docs/LEARNINGS.md" 0
+
+# ── Agent-guide pointers so Codex (AGENTS.md) and Gemini (GEMINI.md) find CLAUDE.md ──
+copy_file "AGENTS.md" "AGENTS.md" 0
+copy_file "GEMINI.md" "GEMINI.md" 0
 
 # ── CLAUDE.md (never clobber; drop the template for reference if one exists) ──
 if [ -f "$TARGET/CLAUDE.md" ]; then
@@ -128,14 +149,16 @@ echo "Done: $copied installed, $skipped kept."
 cat <<'EOF'
 
 Next steps:
-  1. Add the provider secret:   Settings → Secrets and variables → Secrets
-       CLAUDE_CODE_OAUTH_TOKEN   (for the default Claude provider)
-  2. (Optional) Set AGENT_PROVIDER variable: claude | openai-codex | copilot | custom
+  1. Pick a provider, add its secret (Settings → Secrets and variables → Secrets):
+       claude  (default)  CLAUDE_CODE_OAUTH_TOKEN   (`claude setup-token`) or ANTHROPIC_API_KEY
+       openai             OPENAI_API_KEY
+       gemini             GEMINI_API_KEY
+  2. Unless you want Claude, set the AGENT_PROVIDER variable: openai | gemini | custom
   3. Sync labels:               Actions → Setup Labels → Run workflow
-  4. Fill in CLAUDE.md (or merge CLAUDE.template.md into yours).
+  4. Fill in CLAUDE.md (or merge CLAUDE.template.md into yours). Every provider reads it.
   5. (Optional) Cost & review variables — all have sensible defaults:
-       AGENT_MODEL (sonnet)  AGENT_PLAN_MODEL (opus)  AGENT_REVIEW_MODEL (sonnet)
-       AGENT_MAX_TURNS       ENABLE_CLAUDE_REVIEW=true   → see docs/COST.md
+       AGENT_MODEL  AGENT_PLAN_MODEL  AGENT_REVIEW_MODEL  AGENT_MAX_TURNS
+       ENABLE_AGENT_REVIEW=true   → see docs/COST.md
   6. Review the security posture before going live → see docs/SECURITY.md
   7. Commit the layer, open an agent-ready issue, and apply the `agent-ready` label.
 

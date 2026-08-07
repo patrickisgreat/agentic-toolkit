@@ -31,10 +31,13 @@ committed `.claude/settings.json` / `.claude/settings.local.json` in the checkou
 `permissionMode` to `default` and **override the workflow's `settings:` input** (the tell: SDK
 log shows `permissionMode: default` despite a `settings` block).
 
-**Guardrail:** Set the mode via `claude_args: |` `--permission-mode bypassPermissions` on every
-claude step — this reaches the SDK's `permissionMode` directly. Never commit
+**Guardrail:** Set the mode via `claude_args: --permission-mode bypassPermissions` — this reaches
+the SDK's `permissionMode` directly. It is now set in exactly one place,
+`.github/actions/agent-run/action.yml`, so no workflow can forget it. Never commit
 `.claude/settings.local.json` (it's gitignored here). Safe on ephemeral CI runners with a
-repo-scoped token. (CI config — enforced by the workflows + this note.)
+repo-scoped token. The same rule generalizes to the other providers the action supports —
+headless CI must never be able to block on an approval prompt (Codex
+`--dangerously-bypass-approvals-and-sandbox`, Gemini `--yolo`).
 
 ---
 
@@ -91,7 +94,7 @@ network access, so the agent can't execute the suite. It writes tests "blind."
 
 **Guardrail:** Make tests mandatory; have the agent trace each test against its implementation
 before finishing, and never knowingly open a red PR. The project's CI on the PR is the real gate;
-the `@claude` PR-feedback loop (`claude-pr-feedback.yml`) closes the gap when CI catches a miss.
+the `@agent` PR-feedback loop (`agent-pr-feedback.yml`) closes the gap when CI catches a miss.
 
 ---
 

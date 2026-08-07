@@ -1,7 +1,7 @@
 ## 🤖 Agent-Generated PR
 
 Closes #<!-- issue number (keep the `#`; a bare number will NOT auto-close) -->
-**Agent Used:** <!-- Claude Code / Codex / Copilot / Cursor / other -->
+**Agent Used:** <!-- Claude Code / OpenAI Codex / Gemini CLI / Copilot / Cursor / other -->
 **Complexity:** <!-- low / medium / high -->
 
 ---

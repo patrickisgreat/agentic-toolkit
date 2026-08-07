@@ -1,11 +1,12 @@
 # Cost containment & reporting
 
 Running agents in CI spends money two ways: **runner minutes** (GitHub Actions compute)
-and **LLM tokens** (the model calls). This toolkit is built so an org can dial both up or
+and **model tokens** (the LLM calls). This toolkit is built so an org can dial both up or
 down to fit its budget, and can measure what it's spending over time.
 
 Everything here is adjustable via **repository variables** (Settings → Secrets and
-variables → Variables) — no file edits required.
+variables → Variables) — no file edits required. The knobs are provider-neutral: they work
+the same whether `AGENT_PROVIDER` points at Claude, OpenAI, or Gemini.
 
 ---
 
@@ -13,29 +14,41 @@ variables → Variables) — no file edits required.
 
 | Variable | Applies to | Default | What it does |
 | --- | --- | --- | --- |
-| `AGENT_MODEL` | implement, PR feedback, retro | `sonnet` | Model for the common, frequent jobs. Drop to `haiku` to cut cost, raise to `opus` for hardest work. |
-| `AGENT_PLAN_MODEL` | high-complexity planning | `opus` | Planning is rare and high-leverage (a bad plan wastes a whole implementation), so it defaults to the strongest model. Lower it on a tight budget. |
-| `AGENT_REVIEW_MODEL` | PR review | `sonnet` | `haiku` = cheap/light, `sonnet` = balanced, `opus` = deepest. |
-| `AGENT_MAX_TURNS` | all Claude jobs | _(unset)_ | Hard cap on agent loop iterations. Bounds a runaway run. Leave unset for no cap; set e.g. `40` to contain worst case. |
-| `ENABLE_CLAUDE_REVIEW` | PR review | _(off)_ | The review workflow only runs when this is `true`. Off by default — you don't pay for review until you opt in. |
+| `AGENT_MODEL` | implement, PR feedback, retro | `sonnet` on Claude, else the CLI default | Model for the common, frequent jobs. Drop a tier to cut cost, raise it for the hardest work. |
+| `AGENT_PLAN_MODEL` | high-complexity planning | `opus` on Claude, else the CLI default | Planning is rare and high-leverage (a bad plan wastes a whole implementation), so it defaults to the strongest model. Lower it on a tight budget. |
+| `AGENT_REVIEW_MODEL` | PR review | `sonnet` on Claude, else the CLI default | `haiku` = cheap/light, `sonnet` = balanced, `opus` = deepest. |
+| `AGENT_MAX_TURNS` | Claude and Gemini jobs | _(unset)_ | Hard cap on agent loop iterations. Bounds a runaway run. Leave unset for no cap; set e.g. `40` to contain worst case. Codex has no turn cap — `timeout-minutes` bounds it instead. |
+| `ENABLE_AGENT_REVIEW` | PR review | _(off)_ | The review workflow only runs when this is `true`. Off by default — you don't pay for review until you opt in. (`ENABLE_CLAUDE_REVIEW` still works.) |
 | `RUNNER_COST_PER_MIN` | cost report | `0` | USD per runner-minute for the report's runner-cost line. `0` for public repos (free); ~`0.008` for private `ubuntu-latest`. |
 | `LLM_COST_PER_RUN_JSON` | cost report | _(built-in)_ | JSON map of workflow file → average USD/run, to calibrate the report's LLM estimate against your actuals. |
 
-Model names accept the tier **aliases** `haiku` / `sonnet` / `opus` (resolve to the latest
-of each tier) or a pinned full model ID (e.g. `claude-sonnet-4-6`) for reproducibility.
+### Model names, per provider
+
+The three model variables are provider-neutral: whatever you put in them is handed to the
+agent you've selected with `AGENT_PROVIDER`.
+
+- **Claude** accepts the tier **aliases** `haiku` / `sonnet` / `opus` (each resolves to the
+  latest of its tier) or a pinned full model ID (e.g. `claude-sonnet-4-6`) for
+  reproducibility. These are what the defaults above encode.
+- **OpenAI Codex** and **Gemini** take their own model IDs (e.g. `gpt-5-codex`,
+  `gemini-2.5-flash`). Leave the variable **unset** and the toolkit passes no `--model` at
+  all, so the CLI uses its current default — that way a model rename upstream can't break
+  your repo. Set one explicitly when you want a specific cost/quality point or a pin.
 
 ### Model strategy (the biggest lever)
 
-Token cost dwarfs runner cost, and model tier dominates token cost. The defaults encode a
-sensible split:
+Token cost dwarfs runner cost, and model tier dominates token cost. The Claude defaults
+encode a split that transfers to any provider:
 
-- **Frequent, well-scoped work → `sonnet`** (implement / feedback / retro). Good quality,
-  much cheaper than Opus.
-- **Rare, high-stakes work → `opus`** (planning). You're paying for a good plan once.
-- **Review → `sonnet`**, or `haiku` if you just want a cheap sanity pass.
+- **Frequent, well-scoped work → mid tier** (implement / feedback / retro). Good quality,
+  a fraction of the flagship price.
+- **Rare, high-stakes work → top tier** (planning). You pay for a good plan once, and a
+  bad plan wastes a whole implementation.
+- **Review → mid tier**, or the cheapest tier if you just want a sanity pass.
 
 Tightest budget? Set `AGENT_MODEL=haiku`, `AGENT_PLAN_MODEL=sonnet`, leave review off.
 Quality over cost? `AGENT_MODEL=sonnet`, `AGENT_PLAN_MODEL=opus`, `AGENT_REVIEW_MODEL=opus`.
+On OpenAI or Gemini, substitute that provider's equivalent tiers.
 
 ### Other built-in containment
 
@@ -56,19 +69,21 @@ These are baked into the workflows, no config needed:
 
 Pick a starting point, then tune:
 
+Model names below are Claude tiers; on another provider use its equivalents.
+
 **Solo / hobby (minimize spend)**
 ```
 AGENT_MODEL=haiku
 AGENT_PLAN_MODEL=sonnet
 AGENT_MAX_TURNS=30
-ENABLE_CLAUDE_REVIEW=    (leave off)
+ENABLE_AGENT_REVIEW=     (leave off)
 ```
 
 **Team (balanced — recommended default)**
 ```
 AGENT_MODEL=sonnet
 AGENT_PLAN_MODEL=opus
-ENABLE_CLAUDE_REVIEW=true
+ENABLE_AGENT_REVIEW=true
 AGENT_REVIEW_MODEL=sonnet
 ```
 
@@ -76,7 +91,7 @@ AGENT_REVIEW_MODEL=sonnet
 ```
 AGENT_MODEL=sonnet
 AGENT_PLAN_MODEL=opus
-ENABLE_CLAUDE_REVIEW=true
+ENABLE_AGENT_REVIEW=true
 AGENT_REVIEW_MODEL=opus
 ```
 
@@ -101,21 +116,29 @@ LLM-cost estimate — with **period-over-period trend**.
 - **Runner minutes and run counts are exact** — straight from the GitHub Actions API.
 - **LLM cost is an estimate.** GitHub exposes run *timing*, not *tokens*, so the report
   multiplies run counts by an average USD/run per workflow. The built-in averages are
-  rough starting points; **calibrate them** with `LLM_COST_PER_RUN_JSON` once you've seen
-  a few real bills. Example:
+  rough starting points calibrated for mid-tier models; **replace them** with
+  `LLM_COST_PER_RUN_JSON` once you've seen a few real bills — especially on a provider
+  other than Claude, where the defaults are only a shape, not a price. Example:
   ```
-  LLM_COST_PER_RUN_JSON = {"claude-code-review.yml":0.10,"agent-ready-trigger.yml":0.80}
+  LLM_COST_PER_RUN_JSON = {"agent-code-review.yml":0.10,"agent-ready-trigger.yml":0.80}
   ```
 
 ### Getting exact token cost
 
-For ground truth, use **Anthropic's usage/cost reporting** in the
-[Console](https://console.anthropic.com/) (or the Admin Cost API) for the account behind
-`CLAUDE_CODE_OAUTH_TOKEN`. That's the authoritative number; the report's estimate is for
-trend-watching and per-workflow attribution between bills.
+For ground truth, read your provider's own billing console for the account behind the
+secret you configured:
 
-**Optional — real per-run tokens.** The `claude-code-action` reports token usage for each
-run (visible in its job summary). To feed exact numbers into the report instead of
-estimates, capture each run's usage as an artifact and have the report sum them. The
-report is structured to adopt this later; the GitHub run data above needs zero setup and
-is always available.
+| Provider | Where the authoritative number lives |
+| --- | --- |
+| `claude` | [Anthropic Console](https://console.anthropic.com/) usage/cost reporting, or the Admin Cost API |
+| `openai` | [OpenAI platform](https://platform.openai.com/usage) usage dashboard |
+| `gemini` | [Google AI Studio](https://aistudio.google.com/) / Cloud Billing for the key's project |
+
+That's the real number; the report's estimate is for trend-watching and per-workflow
+attribution between bills.
+
+**Optional — real per-run tokens.** Each provider's CLI/action reports token usage for the
+run (Claude's shows up in the action's job summary; `codex exec` and `gemini` print a usage
+summary). To feed exact numbers into the report instead of estimates, capture each run's
+usage as an artifact and have the report sum them. The report is structured to adopt this
+later; the GitHub run data above needs zero setup and is always available.

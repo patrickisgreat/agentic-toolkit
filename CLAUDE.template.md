@@ -10,9 +10,10 @@
 
 # CLAUDE.md
 
-Project context for AI coding agents (Claude Code, both local and CI). Read this first on
-every task. It tells you the stack, how the code is organized, how to run and test things,
-the conventions to follow, and what is off-limits.
+Project context for AI coding agents — Claude Code, OpenAI Codex, Gemini CLI, local or in
+CI. (`AGENTS.md` and `GEMINI.md` point here, so this is the one file to maintain.) Read
+this first on every task. It tells you the stack, how the code is organized, how to run and
+test things, the conventions to follow, and what is off-limits.
 
 Also read **docs/LEARNINGS.md** — failure modes captured from real agent runs and the "why"
 behind the rules here. The rules below are imperative; LEARNINGS explains where they came from.

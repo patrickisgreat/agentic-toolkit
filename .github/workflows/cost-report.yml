@@ -10,12 +10,14 @@
 #                           repo is free). Private ubuntu-latest is ~0.008.
 #   LLM_COST_PER_RUN_JSON   JSON map of workflow file → average USD/run, to override the
 #                           built-in estimate defaults. e.g.
-#                           {"claude-code-review.yml":0.10,"agent-ready-trigger.yml":0.80}
+#                           {"agent-code-review.yml":0.10,"agent-ready-trigger.yml":0.80}
 #
-# The LLM figure is an ESTIMATE (GitHub exposes run timing, not tokens). Calibrate the
-# per-run averages against your Anthropic Console actuals. For exact token cost, see
-# docs/COST.md. If you capture per-run usage artifacts (also in docs/COST.md), wire them
-# in here later — the GitHub run data below is always available with zero setup.
+# The LLM figure is an ESTIMATE (GitHub exposes run timing, not tokens) and the built-in
+# per-run averages assume mid-tier model defaults. Calibrate them against your provider's
+# billing console — Anthropic, OpenAI, or Google, whichever AGENT_PROVIDER points at. For
+# exact token cost see docs/COST.md. If you capture per-run usage artifacts (also in
+# docs/COST.md), wire them in here later — the GitHub run data below is always available
+# with zero setup.
 
 name: Agentic Cost Report
 
@@ -61,14 +63,17 @@ jobs:
           script: |
             const { owner, repo } = context.repo;
 
-            // Workflows that spend on Claude. Built-in average USD/run estimates — override
-            // any of these with the LLM_COST_PER_RUN_JSON repo variable.
+            // Workflows that spend model tokens. Built-in average USD/run estimates —
+            // override any of these with the LLM_COST_PER_RUN_JSON repo variable.
+            // The pre-1.0 names are kept so history spanning the rename still aggregates.
             const TRACKED = {
               'agent-ready-trigger.yml':   { label: 'Trigger (plan / implement)', perRun: 0.60 },
               'plan-approval-gate.yml':    { label: 'Plan approval → implement',  perRun: 0.60 },
-              'claude-pr-feedback.yml':    { label: 'PR feedback (@claude)',      perRun: 0.25 },
+              'agent-pr-feedback.yml':     { label: 'PR feedback (@agent)',       perRun: 0.25 },
+              'claude-pr-feedback.yml':    { label: 'PR feedback (legacy name)',  perRun: 0.25 },
               'agent-retro.yml':           { label: 'Retro',                      perRun: 0.20 },
-              'claude-code-review.yml':    { label: 'PR review',                  perRun: 0.15 },
+              'agent-code-review.yml':     { label: 'PR review',                  perRun: 0.15 },
+              'claude-code-review.yml':    { label: 'PR review (legacy name)',    perRun: 0.15 },
             };
             let overrides = {};
             const rawOverrides = process.env.LLM_COST_PER_RUN_JSON || '';
@@ -181,8 +186,8 @@ jobs:
             md += `\n`;
             md += `> **Runner cost** uses \`RUNNER_COST_PER_MIN = ${runnerRate}\` (USD/min). `;
             md += `**LLM cost is an estimate** from average USD/run per workflow — calibrate with `;
-            md += `\`LLM_COST_PER_RUN_JSON\` against your Anthropic Console actuals. GitHub exposes run `;
-            md += `timing, not tokens; see docs/COST.md for exact-cost options.\n`;
+            md += `\`LLM_COST_PER_RUN_JSON\` against your provider's billing console (Anthropic, OpenAI, `;
+            md += `or Google). GitHub exposes run timing, not tokens; see docs/COST.md for exact-cost options.\n`;
 
             // ── Emit to job summary ───────────────────────────────────────────
             await core.summary.addRaw(md).write();
