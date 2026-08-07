@@ -55,7 +55,7 @@ jobs:
       # with write access in full-auto mode. Mirrors plan-approval-gate.yml.
       - name: Check commenter permissions
         id: permission-check
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const p = context.payload;
@@ -86,7 +86,7 @@ jobs:
       - name: Resolve PR context and instruction
         id: ctx
         if: steps.permission-check.outputs.allowed == 'true'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const p = context.payload;
@@ -115,7 +115,7 @@ jobs:
 
       - name: Checkout PR branch
         if: steps.ctx.outputs.proceed == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ steps.ctx.outputs.head_ref }}
           fetch-depth: 0
