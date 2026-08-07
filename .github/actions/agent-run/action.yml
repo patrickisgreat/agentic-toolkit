@@ -1,0 +1,283 @@
+# Runs one agentic coding task with whichever provider the repo is configured for.
+#
+# This is the single provider seam for the whole toolkit: every workflow that needs an
+# agent calls this action instead of talking to a vendor action or CLI directly. Adding a
+# provider means editing this file, not five workflows.
+#
+# Supported providers (AGENT_PROVIDER repository variable):
+#   claude  (default) → Claude Code via anthropics/claude-code-action
+#                       secret: CLAUDE_CODE_OAUTH_TOKEN  (or ANTHROPIC_API_KEY)
+#   openai            → OpenAI Codex CLI (`codex exec`, headless)
+#                       secret: OPENAI_API_KEY
+#   gemini            → Google Gemini CLI (`gemini --prompt`, headless)
+#                       secret: GEMINI_API_KEY
+#
+# Aliases accepted: anthropic → claude; openai-codex / codex → openai; google /
+# google-gemini → gemini. An empty value means claude.
+#
+# Headless CI must never block on a tool-approval prompt, so every provider runs in its
+# full-auto mode (Claude `bypassPermissions`, Codex bypass-approvals, Gemini `--yolo`).
+# That is safe here and only here: an ephemeral runner with a repo-scoped job token whose
+# `permissions:` block is the real boundary. See docs/SECURITY.md and docs/LEARNINGS.md.
+#
+# Claude drives git itself. Codex and Gemini are backed by a deterministic safety net
+# below: if `push_branch` is set and the agent left commits or a dirty tree behind, this
+# action commits, pushes, and (when `open_pr` is true) opens the PR. It is a no-op when
+# the agent already did the work, so the prompts still ask for it.
+
+name: Run coding agent
+description: Run an agentic coding task with Claude Code, OpenAI Codex, or Google Gemini.
+
+inputs:
+  prompt:
+    description: The task for the agent. Passed to the provider verbatim.
+    required: true
+  provider:
+    description: 'claude | openai | gemini (aliases accepted). Empty means claude.'
+    required: false
+    default: ''
+  model:
+    description: Explicit model override. Empty falls back to `default_model` (Claude) or the CLI default.
+    required: false
+    default: ''
+  default_model:
+    description: Claude-only fallback tier when `model` is empty (e.g. sonnet, opus).
+    required: false
+    default: 'sonnet'
+  max_turns:
+    description: Cap on agent loop iterations. Honored by Claude and Gemini; Codex is bounded by timeout-minutes.
+    required: false
+    default: ''
+
+  # ── Credentials (pass only what your provider needs; the rest stay empty) ────
+  claude_code_oauth_token:
+    description: Claude Code OAuth token (`claude setup-token`).
+    required: false
+    default: ''
+  anthropic_api_key:
+    description: Anthropic API key. Alternative to the OAuth token.
+    required: false
+    default: ''
+  openai_api_key:
+    description: OpenAI API key, for the Codex provider.
+    required: false
+    default: ''
+  gemini_api_key:
+    description: Google AI Studio API key, for the Gemini provider.
+    required: false
+    default: ''
+  github_token:
+    description: Token exposed to the agent as GH_TOKEN so it can use the `gh` CLI.
+    required: true
+
+  # ── Deterministic safety net (Codex / Gemini only) ──────────────────────────
+  push_branch:
+    description: Branch to commit and push the agent's changes to. Empty disables the safety net.
+    required: false
+    default: ''
+  commit_message:
+    description: Commit message for the safety-net commit.
+    required: false
+    default: 'chore(agent): apply agent changes'
+  open_pr:
+    description: 'true to open a PR from `push_branch` when the agent did not open one.'
+    required: false
+    default: 'false'
+  pr_title:
+    description: Title for the safety-net PR.
+    required: false
+    default: ''
+  pr_body:
+    description: Body for the safety-net PR. Include `Closes #NNN` to auto-close the issue.
+    required: false
+    default: ''
+  pr_labels:
+    description: Comma-separated labels to apply to the safety-net PR.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    # ── Normalize the provider, resolve the model, fail fast on a missing secret ─
+    - name: Resolve provider configuration
+      id: cfg
+      shell: bash
+      env:
+        IN_PROVIDER: ${{ inputs.provider }}
+        IN_MODEL: ${{ inputs.model }}
+        IN_DEFAULT_MODEL: ${{ inputs.default_model }}
+        IN_MAX_TURNS: ${{ inputs.max_turns }}
+        HAS_CLAUDE_CRED: ${{ (inputs.claude_code_oauth_token != '' || inputs.anthropic_api_key != '') && 'yes' || 'no' }}
+        HAS_OPENAI_CRED: ${{ inputs.openai_api_key != '' && 'yes' || 'no' }}
+        HAS_GEMINI_CRED: ${{ inputs.gemini_api_key != '' && 'yes' || 'no' }}
+      run: |
+        set -euo pipefail
+
+        case "$(printf '%s' "${IN_PROVIDER:-}" | tr '[:upper:]' '[:lower:]')" in
+          ''|claude|anthropic)          provider=claude ;;
+          openai|openai-codex|codex)    provider=openai ;;
+          gemini|google|google-gemini)  provider=gemini ;;
+          *)
+            echo "::error::AGENT_PROVIDER='${IN_PROVIDER}' is not supported. Use claude, openai, or gemini (or set it to 'custom' to use the repository_dispatch path)."
+            exit 1 ;;
+        esac
+
+        # Claude models are tier aliases with a meaningful cost/quality default per job.
+        # Codex and Gemini track their own current defaults, so we only pass --model when
+        # you explicitly set one — that way a model rename upstream can't break the repo.
+        model="${IN_MODEL:-}"
+        if [ -z "$model" ] && [ "$provider" = "claude" ]; then
+          model="${IN_DEFAULT_MODEL:-}"
+        fi
+
+        case "$provider" in
+          claude) cred="$HAS_CLAUDE_CRED"; secret_hint="CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY)" ;;
+          openai) cred="$HAS_OPENAI_CRED"; secret_hint="OPENAI_API_KEY" ;;
+          gemini) cred="$HAS_GEMINI_CRED"; secret_hint="GEMINI_API_KEY" ;;
+        esac
+        if [ "$cred" != "yes" ]; then
+          echo "::error::Provider '${provider}' is selected but its secret is not set. Add ${secret_hint} under Settings → Secrets and variables → Secrets."
+          exit 1
+        fi
+
+        # Recorded before the agent runs so the safety net can tell "produced commits"
+        # from "changed nothing" without guessing.
+        base_sha="$(git rev-parse HEAD 2>/dev/null || echo '')"
+
+        {
+          echo "provider=$provider"
+          echo "model=$model"
+          echo "base_sha=$base_sha"
+          echo "claude_args=--permission-mode bypassPermissions${model:+ --model $model}${IN_MAX_TURNS:+ --max-turns $IN_MAX_TURNS}"
+        } >> "$GITHUB_OUTPUT"
+
+        echo "Provider: $provider | model: ${model:-<provider default>} | max-turns: ${IN_MAX_TURNS:-<none>}"
+
+    # ── CLAUDE ────────────────────────────────────────────────────────────────
+    # `--permission-mode` must come through claude_args: it is the only path that reaches
+    # the SDK's permissionMode. A `settings:` block alone does not reliably set it, and a
+    # committed .claude/settings*.json can override it. See docs/LEARNINGS.md.
+    - name: Run Claude Code
+      if: steps.cfg.outputs.provider == 'claude'
+      uses: anthropics/claude-code-action@v1
+      with:
+        claude_code_oauth_token: ${{ inputs.claude_code_oauth_token }}
+        anthropic_api_key: ${{ inputs.anthropic_api_key }}
+        claude_args: ${{ steps.cfg.outputs.claude_args }}
+        settings: |
+          {
+            "permissions": {
+              "defaultMode": "bypassPermissions"
+            }
+          }
+        additional_permissions: |
+          actions: read
+        prompt: ${{ inputs.prompt }}
+
+    # ── OPENAI / GOOGLE: shared toolchain ─────────────────────────────────────
+    - name: Set up Node.js
+      if: steps.cfg.outputs.provider != 'claude'
+      uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+
+    - name: Configure git identity
+      if: steps.cfg.outputs.provider != 'claude'
+      shell: bash
+      run: |
+        set -euo pipefail
+        git config user.name  "agentic-toolkit[bot]"
+        git config user.email "agentic-toolkit[bot]@users.noreply.github.com"
+
+    # ── OPENAI (Codex CLI) ────────────────────────────────────────────────────
+    # The prompt goes in on stdin (`codex exec -`) so no issue or comment text is ever
+    # interpolated into a shell command line.
+    - name: Run OpenAI Codex
+      if: steps.cfg.outputs.provider == 'openai'
+      shell: bash
+      env:
+        AGENT_PROMPT: ${{ inputs.prompt }}
+        AGENT_MODEL: ${{ steps.cfg.outputs.model }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+        npm install -g @openai/codex
+
+        args=(exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check)
+        if [ -n "${AGENT_MODEL:-}" ]; then args+=(--model "$AGENT_MODEL"); fi
+
+        printf '%s' "$AGENT_PROMPT" | codex "${args[@]}" -
+
+    # ── GOOGLE (Gemini CLI) ───────────────────────────────────────────────────
+    - name: Run Google Gemini
+      if: steps.cfg.outputs.provider == 'gemini'
+      shell: bash
+      env:
+        AGENT_PROMPT: ${{ inputs.prompt }}
+        AGENT_MODEL: ${{ steps.cfg.outputs.model }}
+        AGENT_MAX_TURNS: ${{ inputs.max_turns }}
+        GEMINI_API_KEY: ${{ inputs.gemini_api_key }}
+        GOOGLE_API_KEY: ${{ inputs.gemini_api_key }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+        npm install -g @google/gemini-cli
+
+        args=(--yolo --prompt "$AGENT_PROMPT")
+        if [ -n "${AGENT_MODEL:-}" ];     then args+=(--model "$AGENT_MODEL"); fi
+        if [ -n "${AGENT_MAX_TURNS:-}" ]; then args+=(--max-session-turns "$AGENT_MAX_TURNS"); fi
+
+        gemini "${args[@]}"
+
+    # ── Safety net: commit, push, and open the PR if the agent didn't ─────────
+    # Claude Code drives git itself, so this is Codex/Gemini only. Every branch of it is
+    # idempotent: nothing to commit and nothing ahead of base means nothing happens.
+    - name: Commit, push, and open PR (if needed)
+      if: ${{ steps.cfg.outputs.provider != 'claude' && inputs.push_branch != '' }}
+      shell: bash
+      env:
+        PUSH_BRANCH: ${{ inputs.push_branch }}
+        COMMIT_MESSAGE: ${{ inputs.commit_message }}
+        OPEN_PR: ${{ inputs.open_pr }}
+        PR_TITLE: ${{ inputs.pr_title }}
+        PR_BODY: ${{ inputs.pr_body }}
+        PR_LABELS: ${{ inputs.pr_labels }}
+        BASE_SHA: ${{ steps.cfg.outputs.base_sha }}
+        GH_TOKEN: ${{ inputs.github_token }}
+      run: |
+        set -euo pipefail
+
+        # The agent may have switched branches itself; land on the intended one either way.
+        if [ "$(git rev-parse --abbrev-ref HEAD)" != "$PUSH_BRANCH" ]; then
+          git checkout -B "$PUSH_BRANCH"
+        fi
+
+        if [ -n "$(git status --porcelain)" ]; then
+          git add -A
+          git commit -m "$COMMIT_MESSAGE"
+          echo "Committed the agent's uncommitted changes."
+        fi
+
+        if [ "$(git rev-parse HEAD)" = "$BASE_SHA" ]; then
+          echo "No commits produced — the agent changed nothing. Nothing to push."
+          exit 0
+        fi
+
+        git push --set-upstream origin "$PUSH_BRANCH"
+
+        [ "$OPEN_PR" = "true" ] || exit 0
+
+        if [ -n "$(gh pr list --head "$PUSH_BRANCH" --state open --json number --jq '.[].number')" ]; then
+          echo "A PR for $PUSH_BRANCH is already open — leaving it alone."
+          exit 0
+        fi
+
+        gh pr create --head "$PUSH_BRANCH" --title "$PR_TITLE" --body "$PR_BODY"
+
+        if [ -n "$PR_LABELS" ]; then
+          # A missing label shouldn't fail a run that already produced a PR.
+          gh pr edit "$PUSH_BRANCH" --add-label "$PR_LABELS" || \
+            echo "::warning::Could not apply labels '$PR_LABELS'. Run the Setup Labels workflow to create them."
+        fi

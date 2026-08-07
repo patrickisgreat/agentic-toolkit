@@ -1,11 +1,13 @@
-# After an agent-generated PR merges, reflect on whether it needed correction and,
-# if there's a generalizable lesson, propose a durable guardrail as its OWN PR
-# (a docs/LEARNINGS.md entry and, where it fits, a guardrail test). A human reviews it.
+# After an agent-generated PR merges, reflect on whether it needed correction and, if
+# there's a generalizable lesson, propose a durable guardrail as its OWN PR (a
+# docs/LEARNINGS.md entry and, where it fits, a guardrail test). A human reviews it.
 #
-# This is the "compounding engine": it turns one-off corrections into permanent
-# guardrails so future agent runs don't repeat the class of mistake. Conservative by
-# design — a clean first-try merge, or a genuine one-off, produces no proposal.
-# Loop-safe: it ignores the retro/* PRs it opens itself.
+# This is the compounding engine: it turns one-off corrections into permanent guardrails
+# so future agent runs don't repeat the class of mistake. Conservative by design — a clean
+# first-try merge, or a genuine one-off, produces no proposal. Loop-safe: it ignores the
+# retro/* PRs it opens itself.
+#
+# Provider-agnostic: runs through .github/actions/agent-run (claude / openai / gemini).
 
 name: Agent Retro
 
@@ -19,10 +21,12 @@ env:
 jobs:
   retro:
     if: |
-      (vars.AGENT_PROVIDER == 'claude' || vars.AGENT_PROVIDER == '') &&
+      vars.AGENT_PROVIDER != 'custom' &&
+      vars.AGENT_PROVIDER != 'copilot' &&
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'agent-generated') &&
-      !startsWith(github.event.pull_request.head.ref, 'retro/')
+      !startsWith(github.event.pull_request.head.ref, 'retro/') &&
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -38,26 +42,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run Claude Code — Retro
-        uses: anthropics/claude-code-action@v1
+      # COST: the retro runs on the standard work tier, and only on agent PRs — a clean
+      # merge produces a one-line comment and nothing else. See docs/COST.md.
+      - name: Run the retrospective
+        uses: ./.github/actions/agent-run
         with:
+          provider: ${{ vars.AGENT_PROVIDER }}
+          model: ${{ vars.AGENT_MODEL }}
+          default_model: sonnet
+          max_turns: ${{ vars.AGENT_MAX_TURNS }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Headless CI must not block on tool-approval prompts. See docs/LEARNINGS.md.
-          # COST: the retro uses AGENT_MODEL (default sonnet) and only runs on agent PRs
-          # that needed correction. Override with AGENT_MODEL / AGENT_MAX_TURNS. See docs/COST.md.
-          claude_args: |
-            --permission-mode bypassPermissions
-            --model ${{ vars.AGENT_MODEL || 'sonnet' }}
-            ${{ vars.AGENT_MAX_TURNS != '' && format('--max-turns {0}', vars.AGENT_MAX_TURNS) || '' }}
-          settings: |
-            {
-              "permissions": {
-                "defaultMode": "bypassPermissions"
-              }
-            }
-          # show_full_output: true   # uncomment to stream SDK output for debugging
-          additional_permissions: |
-            actions: read
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # No safety net: "propose nothing" is a valid and common outcome here, so the
+          # agent decides whether a branch and PR should exist at all.
           prompt: |
             An agent-generated pull request just merged: PR #${{ github.event.pull_request.number }}
             ("${{ github.event.pull_request.title }}"), branch "${{ github.event.pull_request.head.ref }}".
@@ -70,10 +70,11 @@ jobs:
             1. Read the merged PR and its history:
                - gh pr view ${{ github.event.pull_request.number }} --repo ${{ github.repository }} --json title,body,commits,comments,reviews,closingIssuesReferences,files
                - gh pr diff ${{ github.event.pull_request.number }} --repo ${{ github.repository }}
-               Signals it needed correction: multiple fix-up commits, "@claude" feedback
-               comments, changes-requested reviews, or evidence CI failed before passing.
-               Also read the issue it closed to see if the work drifted from intent.
-            2. Read docs/LEARNINGS.md and CLAUDE.md so you don't duplicate an existing lesson.
+               Signals it needed correction: multiple fix-up commits, agent feedback comments
+               ("@agent" / "@claude"), changes-requested reviews, or evidence CI failed before
+               passing. Also read the issue it closed to see if the work drifted from intent.
+            2. Read docs/LEARNINGS.md and CLAUDE.md (this project's agent guide, whatever
+               agent you are) so you don't duplicate an existing lesson.
             3. DECIDE:
                - If the PR merged cleanly with no signs of correction, OR the only problem was
                  a genuine one-off unlikely to recur: do NOT open a PR. Post a one-line comment

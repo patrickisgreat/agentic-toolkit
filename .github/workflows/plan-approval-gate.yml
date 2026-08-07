@@ -1,14 +1,16 @@
-# Listens for '/approve-plan' comments on issues and starts the implementation.
+# Listens for '/approve-plan' on an issue and implements the approved plan.
 #
-# Part of the complexity:high flow:
-#   1. agent-ready-trigger.yml fires, Claude writes a plan to docs/plans/ (direct prompt)
-#   2. Claude posts a comment asking for /approve-plan
-#   3. This workflow fires on that comment, verifies the commenter, then implements
-#      the approved plan with a DIRECT prompt.
+# Second half of the complexity:high flow:
+#   1. agent-ready-trigger.yml runs the agent in plan-only mode; it writes a plan to
+#      docs/plans/ on a plan/issue-N branch and asks for approval.
+#   2. A human with write/admin access comments /approve-plan.
+#   3. This workflow verifies that access, then implements the plan and opens a PR.
 #
-# NOTE: this uses a direct implementation prompt, not a slash command — slash
-# commands do NOT resolve in the headless CI action (see docs/LEARNINGS.md).
-# Only collaborators with write/admin can approve.
+# Provider-agnostic: the work runs through .github/actions/agent-run, so it uses whichever
+# of claude / openai / gemini the AGENT_PROVIDER variable selects.
+#
+# The prompt is direct, not a slash command — slash commands do NOT resolve in headless
+# CI runs (see docs/LEARNINGS.md).
 
 name: Plan Approval Gate
 
@@ -23,7 +25,9 @@ jobs:
   handle-approve-plan:
     if: |
       github.event.issue.pull_request == null &&
-      startsWith(github.event.comment.body, '/approve-plan')
+      startsWith(github.event.comment.body, '/approve-plan') &&
+      vars.AGENT_PROVIDER != 'custom' &&
+      vars.AGENT_PROVIDER != 'copilot'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     # Optional human-approval gate. OFF by default (no required reviewers on the
@@ -41,6 +45,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      # Authorization gate: anyone can comment on a public repo, but only collaborators
+      # may spend money and push code. Mirrors agent-pr-feedback.yml.
       - name: Check commenter permissions
         id: permission-check
         uses: actions/github-script@v9
@@ -91,29 +97,32 @@ jobs:
               core.setOutput('already_running', 'false');
             }
 
-      - name: Run Claude Code — Implement Approved Plan
+      # COST: implementing an approved plan runs on the standard work tier. See docs/COST.md.
+      - name: Implement the approved plan
         if: |
           steps.permission-check.outputs.allowed == 'true' &&
           steps.pr-check.outputs.already_running == 'false'
-        uses: anthropics/claude-code-action@v1
+        uses: ./.github/actions/agent-run
         with:
+          provider: ${{ vars.AGENT_PROVIDER }}
+          model: ${{ vars.AGENT_MODEL }}
+          default_model: sonnet
+          max_turns: ${{ vars.AGENT_MAX_TURNS }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          # Headless CI must not block on tool-approval prompts. See docs/LEARNINGS.md.
-          # COST: implementing the approved plan uses AGENT_MODEL (default sonnet).
-          # Override with AGENT_MODEL / AGENT_MAX_TURNS repo variables. See docs/COST.md.
-          claude_args: |
-            --permission-mode bypassPermissions
-            --model ${{ vars.AGENT_MODEL || 'sonnet' }}
-            ${{ vars.AGENT_MAX_TURNS != '' && format('--max-turns {0}', vars.AGENT_MAX_TURNS) || '' }}
-          settings: |
-            {
-              "permissions": {
-                "defaultMode": "bypassPermissions"
-              }
-            }
-          # show_full_output: true   # uncomment to stream SDK output for debugging
-          additional_permissions: |
-            actions: read
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          gemini_api_key: ${{ secrets.GEMINI_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          push_branch: agent/issue-${{ github.event.issue.number }}
+          commit_message: 'feat(agent): implement approved plan for #${{ github.event.issue.number }}'
+          open_pr: 'true'
+          pr_title: ${{ github.event.issue.title }}
+          pr_body: |
+            Closes #${{ github.event.issue.number }}
+
+            Implements the plan approved on the issue. Review against the issue's acceptance
+            criteria before merging.
+          pr_labels: agent-generated
           prompt: |
             You are implementing issue #${{ github.event.issue.number }}.
 
@@ -124,9 +133,11 @@ jobs:
             Instructions:
             1. Read the full issue body for requirements and scope:
                gh issue view ${{ github.event.issue.number }} --repo ${{ github.repository }}
-            2. Read CLAUDE.md for project-specific guidance.
+            2. Read CLAUDE.md at the repo root — it is this project's agent guide, whatever
+               agent you are (AGENTS.md and GEMINI.md point at it). Read docs/LEARNINGS.md too.
             3. Find the approved plan file in docs/plans/ that corresponds to this issue
                (the most recent matching plan — check file dates and titles) and follow it.
+               It may live on the branch plan/issue-${{ github.event.issue.number }}.
                If no plan file exists, implement directly from the issue.
             4. Implement the feature following the plan and the issue's acceptance criteria.
             5. Create a branch, commit, and open a PR:

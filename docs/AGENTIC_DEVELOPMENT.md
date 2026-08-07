@@ -31,8 +31,8 @@ repeatable, and self-improving.
    /approve-plan                                                            │
         │                                                                   │
         ▼                                                                   │
-   PR is open       ───▶  you review. Need changes? comment "@claude ..."   │
-        │                 claude-pr-feedback.yml pushes fixes to the branch │
+   PR is open       ───▶  you review. Need changes? comment "@agent ..."    │
+        │                 agent-pr-feedback.yml pushes fixes to the branch  │
         ▼                                                                   │
    you merge        ───▶  agent-retro.yml reflects: did this need           │
                           correction? If there's a durable lesson, it       │
@@ -110,15 +110,16 @@ lines" and "you signed off on the approach first."
 Agent PRs use the `agent-generated` PR template — a self-review checklist plus the
 `Closes #NNN` link that auto-closes the issue on merge.
 
-You review like any PR. When you want changes, **comment `@claude <instruction>`** on the
-PR (or in a PR review). `claude-pr-feedback.yml`:
+You review like any PR. When you want changes, **comment `@agent <instruction>`** on the
+PR (or in a PR review) — `@claude` works too, whichever provider you run.
+`agent-pr-feedback.yml`:
 
 - checks the commenter has **write/admin** access (so randoms on a public repo can't
   drive the agent),
-- checks out the PR's head branch,
+- checks out the PR's head branch (and declines fork PRs, which it can't push to),
 - makes the change and pushes it back to the same branch, re-running CI.
 
-This closes the in-PR feedback loop. The base trigger is one-shot-per-issue; `@claude`
+This closes the in-PR feedback loop. The base trigger is one-shot-per-issue; the mention
 is how you steer after the first PR exists.
 
 **You merge.** The agent never does.
@@ -129,7 +130,7 @@ is how you steer after the first PR exists.
 
 When an `agent-generated` PR merges, `agent-retro.yml` reflects on it:
 
-- Did it need correction before landing? (Signals: multiple fix-up commits, `@claude`
+- Did it need correction before landing? (Signals: multiple fix-up commits, `@agent`
   feedback, changes-requested reviews, CI that failed before passing, drift from the
   issue's intent.)
 - Is there a **generalizable** lesson, or was it a one-off?
@@ -150,23 +151,24 @@ implementing. It's how the loop gets smarter instead of repeating itself.
 
 ## Automated PR review (optional)
 
-`claude-code-review.yml` posts an automated review on each PR — a second pair of eyes
-before your own. It is **opt-in** (set `ENABLE_CLAUDE_REVIEW=true`) and deliberately
+`agent-code-review.yml` posts an automated review on each PR — a second pair of eyes
+before your own. It is **opt-in** (set `ENABLE_AGENT_REVIEW=true`) and deliberately
 cost-aware:
 
 - **read-only** (the job token is `contents: read` — it comments, never pushes),
-- **model-parameterized** via `AGENT_REVIEW_MODEL` (`haiku` cheap → `opus` deep),
+- **model-parameterized** via `AGENT_REVIEW_MODEL` (cheapest tier → deepest),
 - **skips drafts and docs-only PRs**, and **cancels superseded runs** on a new push.
 
-It complements — doesn't replace — your review and the `@claude` fix loop. See
+It complements — doesn't replace — your review and the `@agent` fix loop. See
 [COST.md](COST.md).
 
 ## Cost & model selection
 
-Every Claude job picks its model from a repository variable, so you adjust spend without
+Every agent job picks its model from a repository variable, so you adjust spend without
 editing workflows. The defaults encode a cost/quality split: frequent work
-(`AGENT_MODEL`, default `sonnet`), rare high-stakes planning (`AGENT_PLAN_MODEL`, default
-`opus`), review (`AGENT_REVIEW_MODEL`, default `sonnet`). Cap worst-case with
+(`AGENT_MODEL`), rare high-stakes planning (`AGENT_PLAN_MODEL`), review
+(`AGENT_REVIEW_MODEL`). On Claude those default to `sonnet` / `opus` / `sonnet`; on OpenAI
+and Gemini, leaving them unset uses that CLI's own current default. Cap worst-case with
 `AGENT_MAX_TURNS`. The `cost-report.yml` workflow reports spend over time. Full guide,
 knobs, and preset profiles: **[COST.md](COST.md)**.
 
@@ -190,18 +192,47 @@ See the [README](../README.md) for the full quick-start. In short:
 
 1. **Install the layer** (use this repo as a GitHub template, or run `install.sh` against
    an existing repo).
-2. **Add the provider secret.** For the default Claude provider, add
-   `CLAUDE_CODE_OAUTH_TOKEN` under Settings → Secrets and variables → Secrets.
-3. **(Optional) Choose a provider.** Set the `AGENT_PROVIDER` repository *variable* to
-   `claude` (default), `openai-codex`, `copilot`, or `custom`. The non-Claude jobs are
-   stubs you extend for your setup.
+2. **Pick a provider and add its secret** under Settings → Secrets and variables → Secrets:
+   `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`), `OPENAI_API_KEY`, or
+   `GEMINI_API_KEY`.
+3. **Set `AGENT_PROVIDER`** (a repository *variable*) unless you want the `claude` default.
+   See below.
 4. **Sync labels.** Run the Setup Labels workflow once.
 5. **Write a `CLAUDE.md`.** Copy `CLAUDE.template.md` to `CLAUDE.md` and fill in your
-   stack, commands, and conventions. The agent reads this on every run — it's the single
+   stack, commands, and conventions. Every provider reads it on every run — it's the single
    biggest lever on output quality.
 6. **(Optional) Tune cost and enable review.** Set `AGENT_MODEL` / `AGENT_PLAN_MODEL` /
-   `AGENT_REVIEW_MODEL` / `AGENT_MAX_TURNS`, and `ENABLE_CLAUDE_REVIEW=true` for automated
+   `AGENT_REVIEW_MODEL` / `AGENT_MAX_TURNS`, and `ENABLE_AGENT_REVIEW=true` for automated
    review. All have sensible defaults. See [COST.md](COST.md).
+
+### Choosing an agent provider
+
+`AGENT_PROVIDER` selects which agent does the work. Everything else — the labels, the
+complexity routing, the approval gate, the retro, the cost knobs — is identical across
+providers.
+
+| `AGENT_PROVIDER` | Agent | Secret |
+| --- | --- | --- |
+| `claude` _(default, unset = this)_ | Claude Code, via `anthropics/claude-code-action` | `CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY` |
+| `openai` | OpenAI Codex CLI (`codex exec`) | `OPENAI_API_KEY` |
+| `gemini` | Google Gemini CLI (`gemini --prompt`) | `GEMINI_API_KEY` |
+| `custom` | Nothing — emits a `repository_dispatch` event for a listener you write | — |
+
+All three hosted providers run through one composite action,
+`.github/actions/agent-run/action.yml`. That file is the only place a vendor is named:
+adding or swapping a provider is one file, not five workflows.
+
+**One agent guide, three filenames.** `CLAUDE.md` is the source of truth; `AGENTS.md`
+(which Codex loads) and `GEMINI.md` (which Gemini loads) are one-line pointers to it, and
+every prompt names it explicitly. Write your conventions once.
+
+**Where the providers differ in practice.** Claude Code drives git and the GitHub API
+itself. Codex and Gemini are backed by a deterministic safety net in the composite action:
+if the agent leaves work uncommitted, the action commits, pushes to the expected branch,
+and opens the PR with the right `Closes #NNN` body and `agent-generated` label. Prompts
+still ask the agent to do it — the net just means a forgotten `git push` doesn't lose a run.
+`AGENT_MAX_TURNS` is honored by Claude and Gemini; Codex has no turn cap, so
+`timeout-minutes` bounds it.
 
 ---
 
@@ -212,13 +243,15 @@ Running an agent with write access off a label is powerful; the toolkit constrai
 - **A human applies `agent-ready`.** The auto-validator only *advises*. (It also
   technically *can't* auto-apply it usefully — a label set by `GITHUB_TOKEN` doesn't fire
   the trigger. See `docs/LEARNINGS.md`.)
-- **`/approve-plan` and `@claude` are gated on write/admin access.** Anyone can comment on
+- **`/approve-plan` and `@agent` are gated on write/admin access.** Anyone can comment on
   a public repo; only collaborators can drive the agent. The workflows check the
   commenter's permission level and refuse otherwise.
-- **`bypassPermissions` is scoped to ephemeral CI runners** with a repo-scoped token —
-  not your laptop. The committed `.claude/settings.json` is the *interactive* allowlist;
-  the headless permission mode is forced in the workflow (see `docs/LEARNINGS.md` for why
-  both exist and why they differ).
+- **Full-auto mode is scoped to ephemeral CI runners** with a repo-scoped token — not your
+  laptop. Headless CI can't answer an approval prompt, so each provider runs unattended
+  (Claude `bypassPermissions`, Codex bypass-approvals, Gemini `--yolo`) and the job's
+  `permissions:` block is the real boundary. The committed `.claude/settings.json` is the
+  *interactive* allowlist; the headless mode is forced in the workflow (see
+  `docs/LEARNINGS.md` for why both exist and why they differ).
 - **Least-privilege job tokens.** The review job is `contents: read` and can't push; only
   the implementation jobs get `contents: write`. Fork PRs run without secrets
   (`pull_request`, not `pull_request_target`), so they fail safe.
