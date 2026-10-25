@@ -20,7 +20,8 @@
 #   .github/LABELS.yml
 #   .github/dependabot.yml
 #   .claude/settings.json
-#   .claude/skills/<name>/...           (the loop as interactive skills; see README)
+#   .claude/skills/<name>/...           (the loop as interactive skills, for Claude Code)
+#   .agents/skills/<name>/...           (same skills, for OpenAI Codex and Gemini CLI)
 #   docs/{AGENTIC_DEVELOPMENT,COST,SECURITY}.md
 #   docs/LEARNINGS.md            (only if you don't already have one)
 #   docs/plans/.gitkeep, docs/cost-reports/.gitkeep
@@ -108,12 +109,17 @@ copy_file ".github/dependabot.yml"                           ".github/dependabot
 copy_file ".claude/settings.json"                            ".claude/settings.json" 1
 
 # ── Skills (toolkit-owned; overwritable with --force) ────────────────────────
-# Same prompts the workflows run, usable interactively from Claude Code, Codex, or
-# Gemini CLI. Installed under .claude/skills/ so Claude Code auto-discovers them.
+# Same prompts the workflows run, usable interactively. Every CLI reads the same
+# SKILL.md format but looks in its own place, so install two copies:
+#   .claude/skills/   Claude Code (its docs list only this project path)
+#   .agents/skills/   OpenAI Codex and Gemini CLI (both document this as the shared path)
+# Two copies rather than a symlink: Claude Code's docs don't promise to follow a
+# directory-level symlink, and symlinks break on Windows checkouts.
 for skill_dir in "$SCRIPT_DIR"/skills/*/; do
   while IFS= read -r f; do
     rel="${f#"$SCRIPT_DIR/"}"
     copy_file "$rel" ".claude/${rel}" 1
+    copy_file "$rel" ".agents/${rel}" 1
   done < <(find "$skill_dir" -type f | sort)
 done
 
