@@ -100,6 +100,12 @@ it installs as a plugin in one step:
 Codex and Gemini CLI read the same `SKILL.md` format; point them at the `skills/`
 directory (or copy it to the location your CLI version expects).
 
+**Releases.** Merges to `main` go through [release-please](https://github.com/googleapis/release-please)
+via the reusable workflow in [actions-toolkit](https://github.com/patrickisgreat/actions-toolkit):
+Conventional Commits accumulate in a release PR, and merging it cuts the tag, the GitHub
+release, `CHANGELOG.md`, and bumps the version in `.claude-plugin/plugin.json`. That bump is
+what makes an update visible to plugin users, so skill changes ship as `feat:` or `fix:`.
+
 The CI workflows keep their own inline prompts on purpose: headless runs can't resolve
 slash commands (see `docs/LEARNINGS.md`). The skills and the workflow prompts say the
 same things; if you change one, change the other.
