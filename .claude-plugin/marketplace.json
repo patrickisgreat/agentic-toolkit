@@ -1,0 +1,11 @@
+{
+  "name": "agentic-toolkit",
+  "owner": { "name": "Patrick Bennett" },
+  "plugins": [
+    {
+      "name": "agentic-toolkit",
+      "source": "./",
+      "description": "The issue → agent → PR → review → merge → retro loop as skills, plus the installer for the GitHub Actions layer."
+    }
+  ]
+}

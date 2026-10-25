@@ -72,6 +72,38 @@ Then configure it:
 6. **Try it.** Open an issue with the **🤖 Agent-Ready Task** template, fill it out, and
    apply the `agent-ready` label.
 
+## Use it as skills (interactive, any agent)
+
+Everything the workflows do is also packaged as [Agent Skills](https://agentskills.io)
+under [`skills/`](skills/), so you can run the same loop from a terminal session in
+Claude Code, OpenAI Codex, or Gemini CLI without pushing a label:
+
+| Skill | What it does |
+| --- | --- |
+| `write-agent-ready-issue` | Draft, validate, and file an issue the agent can implement unattended. |
+| `plan-issue` | Plan-only mode for `complexity:high`: writes `docs/plans/…`, commits to `plan/issue-N`, asks for `/approve-plan`. |
+| `implement-issue` | Implement an issue to its acceptance criteria and open the PR with `Closes #N` and the `agent-generated` label. |
+| `address-pr-feedback` | Make exactly the change a reviewer asked for on a PR branch, nothing more. |
+| `review-pr` | Post one marker-tagged, cost-aware review comment. Never pushes, never formally approves. |
+| `retro` | Retrospective on a merged PR; proposes a `LEARNINGS` entry plus a guardrail test only when there is a durable lesson. |
+| `write-agent-guide` | Fill in `CLAUDE.md` from the actual codebase. |
+| `install-agentic-toolkit` | Run the installer and walk through secrets, variables, labels, and knobs. |
+
+`install.sh` copies them into the target repo's `.claude/skills/`, where Claude Code
+discovers them automatically. The repo also carries a `.claude-plugin/plugin.json`, so
+it installs as a plugin in one step:
+
+```
+/plugin install agentic-toolkit --marketplace patrickisgreat/agentic-toolkit
+```
+
+Codex and Gemini CLI read the same `SKILL.md` format; point them at the `skills/`
+directory (or copy it to the location your CLI version expects).
+
+The CI workflows keep their own inline prompts on purpose: headless runs can't resolve
+slash commands (see `docs/LEARNINGS.md`). The skills and the workflow prompts say the
+same things; if you change one, change the other.
+
 ## Choose your agent
 
 | `AGENT_PROVIDER` | Runs | Secret it needs |

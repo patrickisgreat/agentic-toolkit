@@ -20,6 +20,7 @@
 #   .github/LABELS.yml
 #   .github/dependabot.yml
 #   .claude/settings.json
+#   .claude/skills/<name>/...           (the loop as interactive skills; see README)
 #   docs/{AGENTIC_DEVELOPMENT,COST,SECURITY}.md
 #   docs/LEARNINGS.md            (only if you don't already have one)
 #   docs/plans/.gitkeep, docs/cost-reports/.gitkeep
@@ -105,6 +106,16 @@ copy_file ".github/PULL_REQUEST_TEMPLATE/agent-generated.md" ".github/PULL_REQUE
 copy_file ".github/LABELS.yml"                               ".github/LABELS.yml" 1
 copy_file ".github/dependabot.yml"                           ".github/dependabot.yml" 0
 copy_file ".claude/settings.json"                            ".claude/settings.json" 1
+
+# ── Skills (toolkit-owned; overwritable with --force) ────────────────────────
+# Same prompts the workflows run, usable interactively from Claude Code, Codex, or
+# Gemini CLI. Installed under .claude/skills/ so Claude Code auto-discovers them.
+for skill_dir in "$SCRIPT_DIR"/skills/*/; do
+  while IFS= read -r f; do
+    rel="${f#"$SCRIPT_DIR/"}"
+    copy_file "$rel" ".claude/${rel}" 1
+  done < <(find "$skill_dir" -type f | sort)
+done
 
 # ── Docs ─────────────────────────────────────────────────────────────────────
 copy_file "docs/AGENTIC_DEVELOPMENT.md" "docs/AGENTIC_DEVELOPMENT.md" 1
