@@ -155,12 +155,19 @@ prompt names it explicitly. Write your conventions once.
 | `.github/PULL_REQUEST_TEMPLATE/agent-generated.md` | Self-review checklist + `Closes #NNN` for agent PRs. |
 | `.github/LABELS.yml` | The readiness / output / complexity labels the workflows key on. |
 | `.claude/settings.json` | Interactive Claude Code permission allowlist for local work. |
+| `skills/<name>/SKILL.md` | The loop as Agent Skills; installed to `.claude/skills/` and `.agents/skills/`. See [Use it as skills](#use-it-as-skills-interactive-any-agent). |
+| `.claude-plugin/` | Plugin + marketplace manifests so Claude Code can install the skills in one step. |
 | `CLAUDE.template.md` | Copy to `CLAUDE.md` and fill in — every agent reads it on every run. |
 | `AGENTS.md` · `GEMINI.md` | Pointers so Codex and Gemini find `CLAUDE.md`. |
 | `docs/AGENTIC_DEVELOPMENT.md` | The system guide. |
 | `docs/LEARNINGS.md` | Institutional memory: agent failure modes + guardrails. The retro appends here. |
 | `docs/COST.md` | Cost containment knobs + the spend report. |
 | `docs/SECURITY.md` | Trust boundary, built-in controls, and hardening by risk level. |
+
+**Not in the box** (this repo's own plumbing; `install.sh` skips them):
+`.github/workflows/claude-pr-review.yml` reviews every PR to *this* repo with Claude, and
+`.github/workflows/release.yml` plus `release-please-config.json`, `.release-please-manifest.json`,
+and `version.txt` cut the releases described above.
 
 ## Cost containment
 
