@@ -5,7 +5,8 @@ description: Install or refresh the agentic-toolkit GitHub Actions layer (issue 
 
 # Install the agentic toolkit
 
-The toolkit is a drop-in `.github/` layer plus docs and an agent guide. One repository
+The toolkit is a drop-in `.github/` layer plus docs, an agent guide, and the loop as skills
+(installed to `.claude/skills/` for Claude Code and `.agents/skills/` for Codex and Gemini CLI). One repository
 variable picks the agent (Claude Code, OpenAI Codex, or Google Gemini); everything else in
 the loop is identical.
 
