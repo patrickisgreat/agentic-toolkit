@@ -1,0 +1,49 @@
+# Releases for this repo: tags, GitHub releases, CHANGELOG, and the plugin version.
+#
+# Calls the reusable release-please workflow from patrickisgreat/actions-toolkit. It opens
+# a release PR that accumulates changelog entries from Conventional Commits, polls that
+# PR's checks (the personal-repo stand-in for "Allow auto-merge"), squash-merges it, and
+# cuts the tag and GitHub release.
+#
+# The version lives in three places and release-please keeps them in step:
+#   version.txt                      (release-type: simple)
+#   .release-please-manifest.json    (release-please's own bookkeeping)
+#   .claude-plugin/plugin.json       (extra-files; this is what the plugin installer reads,
+#                                     so a release is what makes an update visible)
+#
+# No moving major tag: nobody pins this repo by ref — the installer is cloned and the
+# plugin is versioned by plugin.json.
+#
+# `RELEASE_TOKEN` is optional. Without it the release commit is pushed with GITHUB_TOKEN,
+# which does not trigger other workflows; that's fine here because nothing runs on push.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: patrickisgreat/actions-toolkit/.github/workflows/release-please.yml@v0
+    with:
+      config-file: release-please-config.json
+      manifest-file: .release-please-manifest.json
+      auto-merge: true
+      move-major-tag: false
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      statuses: read
+      actions: read
+    secrets:
+      RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
