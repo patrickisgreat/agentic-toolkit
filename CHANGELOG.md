@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/patrickisgreat/agentic-toolkit/compare/v0.2.0...v0.3.0) (2026-10-25)
+
+
+### Features
+
+* ship skills for Codex and Gemini CLI, and review this repo's PRs with Claude ([b2e0f7d](https://github.com/patrickisgreat/agentic-toolkit/commit/b2e0f7d42b10dd057b0bda77d98779e0cadbf0b5))
+
+
+### Bug Fixes
+
+* **release:** drop package-name so merged release PRs get tagged ([bc314a9](https://github.com/patrickisgreat/agentic-toolkit/commit/bc314a9401449f1ec425bd1b973fd8e985690842))
+
 ## [0.2.0](https://github.com/patrickisgreat/agentic-toolkit/compare/v0.1.0...v0.2.0) (2026-10-25)
 
 
