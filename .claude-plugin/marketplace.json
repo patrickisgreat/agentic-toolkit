@@ -5,7 +5,7 @@
     {
       "name": "agentic-toolkit",
       "source": "./",
-      "description": "The issue → agent → PR → review → merge → retro loop as skills, plus the installer for the GitHub Actions layer."
+      "description": "A set of skills covering the full loop from issue to agent to PR, then review, merge, and retro, along with an installer for the GitHub Actions side."
     }
   ]
 }
