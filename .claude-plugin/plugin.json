@@ -1,6 +1,6 @@
 {
   "name": "agentic-toolkit",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "The issue → agent → PR → review → merge → retro loop as skills: write agent-ready issues, plan and implement them, address PR feedback, review PRs, run retros, and install the GitHub Actions layer.",
   "author": {
     "name": "Patrick Bennett"
