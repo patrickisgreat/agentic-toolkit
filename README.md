@@ -89,16 +89,23 @@ Claude Code, OpenAI Codex, or Gemini CLI without pushing a label:
 | `write-agent-guide` | Fill in `CLAUDE.md` from the actual codebase. |
 | `install-agentic-toolkit` | Run the installer and walk through secrets, variables, labels, and knobs. |
 
-`install.sh` copies them into the target repo's `.claude/skills/`, where Claude Code
-discovers them automatically. The repo also carries a `.claude-plugin/plugin.json`, so
-it installs as a plugin in one step:
+`install.sh` copies them into the target repo twice, because each CLI reads the same
+`SKILL.md` format from its own directory:
+
+| CLI | Reads project skills from | Invoke with |
+| --- | --- | --- |
+| Claude Code | `.claude/skills/` | `/<skill-name>` |
+| OpenAI Codex (CLI, IDE, and ChatGPT) | `.agents/skills/` | `$<skill-name>` in Codex, `@` in ChatGPT |
+| Gemini CLI | `.agents/skills/` (alias of `.gemini/skills/`) | on demand; `/skills list` to see them |
+
+Claude Code users can skip the installer and add the repo as a plugin in one step:
 
 ```
 /plugin install agentic-toolkit --marketplace patrickisgreat/agentic-toolkit
 ```
 
-Codex and Gemini CLI read the same `SKILL.md` format; point them at the `skills/`
-directory (or copy it to the location your CLI version expects).
+Gemini "Gems" are not the same thing: a Gem is a saved persona in the Gemini chat app,
+not something a repo can ship. Gemini CLI uses skills, same as the others.
 
 **Releases.** Merges to `main` go through [release-please](https://github.com/googleapis/release-please)
 via the reusable workflow in [actions-toolkit](https://github.com/patrickisgreat/actions-toolkit):
